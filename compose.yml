@@ -39,7 +39,7 @@ services:
 
   ################################################################################
 
-  cdp-node-backend-template:
+  mmo-cr-copilot-backend:
     build:
       context: .
       target: development
