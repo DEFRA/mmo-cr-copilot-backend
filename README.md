@@ -1,6 +1,17 @@
 # mmo-cr-copilot-backend
 
-Core delivery platform Node.js Backend Template.
+Backend for the Copilot analytics dashboard. It ingests pull request analytics payloads produced by
+GitHub Actions, persists them to MongoDB, and serves them to
+[mmo-cr-copilot-dashboard](https://github.com/DEFRA/mmo-cr-copilot-dashboard) together with SonarCloud
+code quality metrics.
+
+This service is not exposed publicly. All traffic arrives from the dashboard frontend, which acts as
+the backend-for-frontend:
+
+```text
+GitHub Actions --POST--> mmo-cr-copilot-dashboard --POST--> mmo-cr-copilot-backend --> MongoDB
+        browser <--poll-- mmo-cr-copilot-dashboard <--GET-- mmo-cr-copilot-backend <-- SonarCloud
+```
 
 - [Requirements](#requirements)
   - [Node.js](#nodejs)
@@ -14,6 +25,7 @@ Core delivery platform Node.js Backend Template.
   - [Formatting](#formatting)
     - [Windows prettier issue](#windows-prettier-issue)
 - [API endpoints](#api-endpoints)
+- [Configuration](#configuration)
 - [Development helpers](#development-helpers)
   - [MongoDB Locks](#mongodb-locks)
   - [Proxy](#proxy)
@@ -114,11 +126,44 @@ git config --global core.autocrlf false
 
 ## API endpoints
 
-| Endpoint             | Description                    |
-| :------------------- | :----------------------------- |
-| `GET: /health`       | Health                         |
-| `GET: /example    `  | Example API (remove as needed) |
-| `GET: /example/<id>` | Example API (remove as needed) |
+| Endpoint                                     | Description                                              |
+| :------------------------------------------- | :------------------------------------------------------- |
+| `GET: /health`                               | Platform health check                                    |
+| `POST: /api/payloads`                        | Ingest one analytics payload (requires `x-ingest-token`) |
+| `GET: /api/payloads`                         | Latest payload per repository and pull request           |
+| `GET: /api/payloads/{repository}/{prNumber}` | Full payload history for one pull request, newest first  |
+| `GET: /api/sonar/overview`                   | Quality gate status for every linked repository          |
+| `GET: /api/sonar/repo?repository=`           | Main branch quality metrics for one repository           |
+| `GET: /api/sonar/pr?repository=&prNumber=`   | New code quality metrics for one pull request            |
+
+`{repository}` is URL encoded because it contains a `/`, for example
+`/api/payloads/DEFRA%2Fmmo-cr-copilot-dashboard/42`.
+
+Payloads are appended rather than replaced, so the full history of a pull request is retained and
+`GET /api/payloads` returns only the most recent entry per `(repository, prNumber)` pair.
+`sourceBranch` is populated while a pull request is open but omitted on the final merged message; when
+it is missing it is backfilled from the previous message for the same pull request.
+
+## Configuration
+
+All configuration is read from environment variables via convict (`src/config.js`). In CDP
+environments these are injected from AWS Secrets Manager and Parameter Store through the CDP Portal —
+never commit secrets.
+
+| Variable            | Required | Description                                                                                                                                  |
+| :------------------ | :------- | :------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MONGO_URI`         | Yes      | MongoDB connection string                                                                                                                    |
+| `MONGO_DATABASE`    | No       | Database name, defaults to `mmo-cr-copilot-backend`                                                                                          |
+| `INGEST_TOKEN`      | Yes      | Shared secret the dashboard presents on `POST /api/payloads`. When empty the check is skipped, which is intended for local development only. |
+| `SONAR_PROJECT_MAP` | No       | JSON map of `"<git repository>": "<SonarCloud project key>"`. Without it the SonarCloud panels are hidden.                                   |
+| `SONAR_TOKEN`       | No       | SonarCloud user token. Only needed for private projects; public projects are read anonymously.                                               |
+| `SONAR_BASE_URL`    | No       | Override for SonarQube Server, defaults to `https://sonarcloud.io`                                                                           |
+| `HTTP_PROXY`        | No       | CDP outbound proxy. Set in deployed environments so SonarCloud calls can leave the platform.                                                 |
+
+The SonarCloud integration degrades gracefully at every level: no project map means the feature
+reports itself as not configured, a repository missing from the map is reported as not linked, and a
+404 from SonarCloud is reported as not analysed. In each case the dashboard hides the affected panel
+rather than showing an error.
 
 ## Development helpers
 

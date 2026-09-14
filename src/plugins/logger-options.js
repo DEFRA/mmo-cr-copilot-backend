@@ -1,4 +1,5 @@
 import { ecsFormat } from '@elastic/ecs-pino-format'
+import pinoPretty from 'pino-pretty'
 import { config } from '#/config.js'
 import { getTraceId } from '@defra/hapi-tracing'
 
@@ -13,7 +14,9 @@ const formatters = {
       serviceName
     })
   },
-  'pino-pretty': { transport: { target: 'pino-pretty' } }
+  'pino-pretty': {
+    stream: pinoPretty()
+  }
 }
 
 export const loggerOptions = {

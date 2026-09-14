@@ -1,13 +1,15 @@
 {
   "name": "mmo-cr-copilot-backend",
   "version": "0.0.0",
-  "description": "mmo-cr-copilot-backend",
+  "description": "Copilot analytics backend \u2014 ingests pull request analytics payloads, persists them to MongoDB and serves them to the dashboard alongside SonarCloud code quality metrics",
   "main": "src/index.js",
   "type": "module",
   "engines": {
     "node": ">=24"
   },
   "scripts": {
+    "db:clear": "node scripts/clear-mock-data.js",
+    "db:seed": "node scripts/seed-mock-data.js",
     "dev": "AWS_EMF_ENVIRONMENT=Local NODE_ENV=development npm run server:watch",
     "dev:debug": "AWS_EMF_ENVIRONMENT=Local NODE_ENV=development npm run server:debug",
     "docker:dev": "npm run dev",
@@ -16,7 +18,7 @@
     "git:pre-commit-hook": "npm run security-audit && npm run format:check && npm run lint && npm test",
     "lint": "eslint --cache --cache-strategy content \"**/*.{cjs,js}\"",
     "lint:fix": "npm run lint -- --fix",
-    "security-audit": "npm audit --audit-level=critical",
+    "security-audit": "npm audit --audit-level=moderate",
     "server:debug": "node --watch --inspect-brk=0.0.0.0 --env-file-if-exists=.env ./src",
     "server:watch": "node --watch --inspect=0.0.0.0 --env-file-if-exists=.env ./src",
     "setup:husky": "node -e \"try { (await import('husky')).default() } catch (e) { if (e.code !== 'ERR_MODULE_NOT_FOUND') throw e }\" --input-type module",
@@ -25,7 +27,8 @@
     "test:watch": "TZ=UTC vitest"
   },
   "imports": {
-    "#/*": "./src/*"
+    "#/*": "./src/*",
+    "#/test-helpers/*": "./test-helpers/*"
   },
   "author": "Defra DDTS",
   "license": "OGL-UK-3.0",
@@ -46,7 +49,8 @@
     "joi": "18.2.5",
     "mongo-locks": "3.2.0",
     "mongodb": "7.6.0",
-    "pino": "10.3.1"
+    "pino": "10.3.1",
+    "undici": "7.29.1"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "4.1.11",

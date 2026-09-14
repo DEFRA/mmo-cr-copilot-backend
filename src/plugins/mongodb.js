@@ -1,6 +1,9 @@
 import { MongoClient } from 'mongodb'
 import { LockManager } from 'mongo-locks'
 
+import { PAYLOADS_COLLECTION } from '#/services/payloads.js'
+import { PERSONA_MAPPINGS_COLLECTION } from '#/services/persona-mappings.js'
+
 export const mongoDb = {
   plugin: {
     name: 'mongodb',
@@ -41,6 +44,14 @@ export const mongoDb = {
 async function createIndexes(db) {
   await db.collection('mongo-locks').createIndex({ id: 1 })
 
-  // Example of how to create a mongodb index. Remove as required
-  await db.collection('example-data').createIndex({ id: 1 })
+  // Serves both the per-PR history query and the "latest per repo+PR" rollup.
+  await db
+    .collection(PAYLOADS_COLLECTION)
+    .createIndex({ repository: 1, prNumber: 1, calculatedAt: -1 })
+  // Time-based queries on when payloads arrived.
+  await db.collection(PAYLOADS_COLLECTION).createIndex({ receivedAt: -1 })
+  // _id is already the lower-cased handle; this supports lookups by display casing.
+  await db
+    .collection(PERSONA_MAPPINGS_COLLECTION)
+    .createIndex({ githubHandle: 1 })
 }

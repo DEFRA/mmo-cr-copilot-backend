@@ -4,7 +4,6 @@ on:
   pull_request:
     branches:
       - main
-      - minimal
     types:
       - opened
       - reopened
@@ -19,17 +18,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Test code and Create Test Coverage Reports
+      - name: Set up Node
         uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
 
+      - name: Install dependencies
+        run: npm ci
+
       - name: Security audit
         run: npm run security-audit
 
-      - run: |
-          npm ci
+      - name: Check formatting, lint and test
+        run: |
           npm run format:check
           npm run lint
           npm test
@@ -37,7 +39,7 @@ jobs:
       - name: Test Docker Image Build
         run: |
           set +e
-          docker build --no-cache --tag cdp-node-backend-template .
+          docker build --no-cache --tag mmo-cr-copilot-backend .
           exit $?
 
 #      - name: SonarCloud Scan

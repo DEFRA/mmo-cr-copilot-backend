@@ -1,11 +1,13 @@
 import { health } from '#/routes/health.js'
-import { example } from '#/routes/example.js'
+import { payloads } from '#/routes/payloads.js'
+import { personaMappings } from '#/routes/persona-mappings.js'
+import { sonar } from '#/routes/sonar.js'
 
 export const router = {
   plugin: {
     name: 'router',
     register: (server, _options) => {
-      server.route([health].concat(example))
+      server.route([health, ...payloads, ...personaMappings, ...sonar])
     }
   }
 }

@@ -59,6 +59,11 @@ services:
       PORT: 3001
       NODE_ENV: development
       MONGO_URI: mongodb://mongodb:27017/
+      # Shared secret the dashboard frontend presents on POST /api/payloads.
+      INGEST_TOKEN: local-development-ingest-token
+      # Set SONAR_PROJECT_MAP (and SONAR_TOKEN for private projects) to enable
+      # the code quality panels locally.
+      SONAR_PROJECT_MAP: ''
     networks:
       - cdp-tenant
     volumes:

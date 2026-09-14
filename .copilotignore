@@ -1,0 +1,36 @@
+# Files Copilot must never read, echo, ingest as context, or write.
+#
+# This is a context guard, not secret protection. Secrets must never be committed
+# at all — see the DEFRA credential exposure process. Mirror these patterns in
+# GitHub content exclusion for the repository.
+
+# Environment and local config
+.env
+.env.*
+*.env
+compose/aws.env
+
+# Credentials, keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+**/secrets/**
+**/credentials/**
+.npmrc
+.netrc
+
+# Cloud and infrastructure state
+*.tfstate
+*.tfstate.*
+.terraform/
+**/kubeconfig
+**/.aws/**
+**/.azure/**
+
+# Build output, caches and coverage — noise, not secrets
+coverage/
+node_modules/
+.cache/

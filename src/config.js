@@ -72,7 +72,12 @@ export const config = convict({
       doc: 'Log paths to redact',
       format: Array,
       default: isProduction
-        ? ['req.headers.authorization', 'req.headers.cookie', 'res.headers']
+        ? [
+            'req.headers.authorization',
+            'req.headers.cookie',
+            'req.headers["x-ingest-token"]',
+            'res.headers'
+          ]
         : ['req', 'res', 'responseTime']
     }
   },
@@ -126,7 +131,74 @@ export const config = convict({
       default: 'x-cdp-request-id',
       env: 'TRACING_HEADER'
     }
+  },
+  ingest: {
+    token: {
+      doc: 'Shared secret the dashboard frontend presents on POST /api/payloads. Required outside local development.',
+      format: String,
+      default: '',
+      sensitive: true,
+      env: 'INGEST_TOKEN'
+    },
+    maxPayloadBytes: {
+      doc: 'Maximum accepted size of an ingest request body. Must match INGEST_MAX_PAYLOAD_BYTES in the dashboard, which forwards to this route.',
+      format: Number,
+      default: 2097152,
+      env: 'INGEST_MAX_PAYLOAD_BYTES'
+    }
+  },
+  sonar: {
+    baseUrl: {
+      doc: 'SonarCloud / SonarQube Server API base URL',
+      format: String,
+      default: 'https://sonarcloud.io',
+      env: 'SONAR_BASE_URL'
+    },
+    token: {
+      doc: 'SonarCloud user token. Only required for private projects; public projects are read anonymously.',
+      format: String,
+      default: '',
+      sensitive: true,
+      env: 'SONAR_TOKEN'
+    },
+    projectMap: {
+      doc: 'JSON map of "<git repository>": "<SonarCloud project key>". Repositories absent from the map are reported as not linked.',
+      format: String,
+      default: '',
+      env: 'SONAR_PROJECT_MAP'
+    },
+    requestTimeoutMs: {
+      doc: 'Timeout applied to each SonarCloud API request',
+      format: Number,
+      default: 8000,
+      env: 'SONAR_REQUEST_TIMEOUT_MS'
+    },
+    cacheTtlMs: {
+      doc: 'How long SonarCloud responses are cached in memory',
+      format: Number,
+      default: 300000,
+      env: 'SONAR_CACHE_TTL_MS'
+    }
   }
 })
 
 config.validate({ allowed: 'strict' })
+
+/**
+ * Secrets that guard a write path must fail closed. Defaulting them to empty
+ * keeps local development frictionless, but a deployed environment that lost
+ * its SSM injection would otherwise run wide open and only log a warning.
+ */
+if (config.get('cdpEnvironment') !== 'local') {
+  const required = [['ingest.token', 'INGEST_TOKEN']]
+
+  const missing = required
+    .filter(([key]) => !config.get(key).trim())
+    .map(([, env]) => env)
+
+  if (missing.length) {
+    throw new Error(
+      `Missing required configuration in the '${config.get('cdpEnvironment')}' environment: ${missing.join(', ')}`
+    )
+  }
+}
