@@ -71,6 +71,16 @@ you decide.
 - Corroborate anything load-bearing with **two independent sources**; note where they disagree.
 - Only research in the open — no proprietary/closed sources; this repo is built in the open.
 
+**Check the CDP documentation whenever the question touches the platform.** For anything about
+secrets versus configuration, the outbound proxy allow-list, deployments, environments, databases,
+observability, alerting, shuttering or onboarding, the DEFRA Core Delivery Platform documentation is
+the authoritative source and outranks community guidance. Consult it if you can reach it — as a local
+checkout alongside this one, or at https://github.com/DEFRA/cdp-documentation — starting from its
+README and navigation, then the relevant `how-to/` page. Cite the page you relied on. If it is not
+reachable, say the platform guidance could not be verified rather than answering from memory; a
+local checkout outside the workspace folders will not be reachable by workspace search, so read it
+by path.
+
 ### 3. Align to DEFRA
 
 Run each candidate answer through the **DEFRA alignment checklist** below and resolve conflicts by
