@@ -25,7 +25,23 @@ const optionalString = Joi.string().min(1).max(512).empty(emptyish).optional()
 const count = Joi.number().integer().min(0).required()
 const percentage = Joi.number().min(0).max(100).required()
 
-export const COMMIT_CLASSIFICATIONS = ['Copilot-assisted', 'Human-authored']
+// Upper bounds sized well above a realistic pull request so a malformed or
+// hostile producer cannot drive unbounded documents into Mongo.
+const MAX_COMMITS = 1000
+const MAX_CONTRIBUTORS = 200
+
+/**
+ * `Rebase` and `Dependabot` commits are reported so a consumer can show how
+ * many were set aside, but the producer excludes them from every total in
+ * `summary` and `contributorBreakdown`. Payloads stored before the producer
+ * classified them carry merge commits as `Human-authored`.
+ */
+export const COUNTED_CLASSIFICATIONS = ['Copilot-assisted', 'Human-authored']
+export const EXCLUDED_CLASSIFICATIONS = ['Rebase', 'Dependabot']
+export const COMMIT_CLASSIFICATIONS = [
+  ...COUNTED_CLASSIFICATIONS,
+  ...EXCLUDED_CLASSIFICATIONS
+]
 
 const commitEntrySchema = Joi.object({
   commit: Joi.string().min(1).max(64).required(),
@@ -63,7 +79,12 @@ const summarySchema = Joi.object({
   totalLinesTouched: count,
   copilotAssistedLines: count,
   humanAuthoredLines: count,
-  copilotAssistedLineRate: percentage
+  copilotAssistedLineRate: percentage,
+  // Optional: absent from payloads produced before commits were classified
+  // as Rebase/Dependabot upstream.
+  excludedCommits: count.optional(),
+  rebaseCommits: count.optional(),
+  dependabotCommits: count.optional()
 })
 
 /**
@@ -85,6 +106,32 @@ export const analyticsPayloadSchema = Joi.object({
   contributorBreakdown: Joi.array()
     .items(contributorEntrySchema)
     .min(1)
+    .max(MAX_CONTRIBUTORS)
     .required(),
-  commitBreakdown: Joi.array().items(commitEntrySchema).min(1).required()
+  commitBreakdown: Joi.array()
+    .items(commitEntrySchema)
+    .min(1)
+    .max(MAX_COMMITS)
+    .required()
+}).options({ stripUnknown: true })
+
+/**
+ * Validation for an operator correcting one commit's classification from the
+ * dashboard. Separate from the ingest contract above: this is a hand-made
+ * change to a single field, not a machine-generated analytics message.
+ */
+export const commitClassificationParamsSchema = Joi.object({
+  // URL-encoded on the wire (e.g. DEFRA%2Frepo-name).
+  repository: Joi.string().min(1).max(512).required(),
+  prNumber: Joi.number().integer().min(1).required(),
+  commit: Joi.string()
+    .pattern(/^[\da-f]{7,64}$/i)
+    .message('{{#label}} must be a commit SHA')
+    .required()
+})
+
+export const commitClassificationPayloadSchema = Joi.object({
+  classification: Joi.string()
+    .valid(...COMMIT_CLASSIFICATIONS)
+    .required()
 }).options({ stripUnknown: true })

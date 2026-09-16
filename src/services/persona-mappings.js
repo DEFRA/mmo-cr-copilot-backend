@@ -20,6 +20,18 @@ export async function listPersonaMappings(db) {
 }
 
 /**
+ * One handle's mapping, or null when it has none. Used by the routes to
+ * capture the before-state of a change for the audit trail.
+ */
+export async function findPersonaMapping(db, githubHandle) {
+  const doc = await db
+    .collection(PERSONA_MAPPINGS_COLLECTION)
+    .findOne({ _id: githubHandle.toLowerCase() })
+
+  return doc ? toEntry(doc) : null
+}
+
+/**
  * Creates or replaces the persona assigned to a GitHub handle. Keyed on the
  * lower-cased handle so the mapping is case-insensitive, while the
  * originally-entered casing is kept for display.

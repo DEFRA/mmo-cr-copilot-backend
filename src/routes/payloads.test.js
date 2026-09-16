@@ -113,7 +113,7 @@ describe('#payloads routes', () => {
   })
 
   describe('GET /api/payloads/{repository}/{prNumber}', () => {
-    test('Should return the full history for a PR', async () => {
+    test('Should return the current record for a PR', async () => {
       await post(buildPayload({ buildId: 'first' }))
       await post(
         buildPayload({
@@ -130,8 +130,7 @@ describe('#payloads routes', () => {
       expect(result.repository).toBe('DEFRA/mmo-cr-copilot-dashboard')
       expect(result.prNumber).toBe(42)
       expect(result.payloads.map((payload) => payload.buildId)).toEqual([
-        'second',
-        'first'
+        'second'
       ])
     })
 
@@ -154,6 +153,79 @@ describe('#payloads routes', () => {
 
     test('Should reject a PR number below one', async () => {
       const { statusCode } = await server.inject('/api/payloads/DEFRA%2Frepo/0')
+
+      expect(statusCode).toBe(400)
+    })
+  })
+
+  describe('PATCH /api/payloads/{repository}/{prNumber}/commits/{commit}', () => {
+    const BASE_URL =
+      '/api/payloads/DEFRA%2Fmmo-cr-copilot-dashboard/42/commits/abc1234'
+
+    const patch = (payload, url = BASE_URL) =>
+      server.inject({ method: 'PATCH', url, payload })
+
+    test('Should re-classify a commit on a merged PR', async () => {
+      await post(buildPayload())
+
+      const { statusCode, result } = await patch({
+        classification: 'Human-authored'
+      })
+
+      expect(statusCode).toBe(200)
+      expect(result.status).toBe('updated')
+      expect(result.payload.commitBreakdown[0].classification).toBe(
+        'Human-authored'
+      )
+      expect(result.payload.summary.copilotAssistedCommits).toBe(0)
+    })
+
+    test('Should reject a PR that is not merged', async () => {
+      const payload = buildPayload()
+      delete payload.prMergedAt
+      await post(payload)
+
+      const { statusCode, result } = await patch({
+        classification: 'Human-authored'
+      })
+
+      expect(statusCode).toBe(409)
+      expect(result.message).toMatch(/not merged/)
+    })
+
+    test('Should return 404 for an unknown PR', async () => {
+      const { statusCode } = await patch(
+        { classification: 'Human-authored' },
+        '/api/payloads/DEFRA%2Funknown/7/commits/abc1234'
+      )
+
+      expect(statusCode).toBe(404)
+    })
+
+    test('Should return 404 for an unknown commit', async () => {
+      await post(buildPayload())
+
+      const { statusCode } = await patch(
+        { classification: 'Human-authored' },
+        '/api/payloads/DEFRA%2Fmmo-cr-copilot-dashboard/42/commits/ffffff0'
+      )
+
+      expect(statusCode).toBe(404)
+    })
+
+    test('Should reject an unknown classification', async () => {
+      await post(buildPayload())
+
+      const { statusCode } = await patch({ classification: 'Vibes' })
+
+      expect(statusCode).toBe(400)
+    })
+
+    test('Should reject a commit that is not a SHA', async () => {
+      const { statusCode } = await patch(
+        { classification: 'Human-authored' },
+        '/api/payloads/DEFRA%2Frepo/42/commits/not-a-sha'
+      )
 
       expect(statusCode).toBe(400)
     })
