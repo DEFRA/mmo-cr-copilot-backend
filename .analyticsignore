@@ -1,0 +1,5 @@
+# Paths excluded from Copilot analytics line counting.
+# Excludes documentation and design artefacts from line-volume metrics.
+
+docs/
+design/
