@@ -10,15 +10,24 @@ async function clearData() {
     await client.connect()
     const db = client.db(DATABASE_NAME)
 
-    const payloadsRes = await db.collection('payloads').deleteMany({})
-    const personasRes = await db.collection('persona-mappings').deleteMany({})
+    const collections = [
+      'payloads',
+      'persona-mappings',
+      'projects',
+      'repositories',
+      'jira-issues',
+      'pr-jira-links',
+      'jira-sprint-scope',
+      'sonar-snapshots',
+      'sonar-pr-snapshots',
+      'audit-logs'
+    ]
 
-    console.log(
-      `Cleared ${payloadsRes.deletedCount} payload(s) from 'payloads' collection.`
-    )
-    console.log(
-      `Cleared ${personasRes.deletedCount} mapping(s) from 'persona-mappings' collection.`
-    )
+    for (const name of collections) {
+      const res = await db.collection(name).deleteMany({})
+      console.log(`Cleared ${res.deletedCount} document(s) from '${name}'.`)
+    }
+
     console.log('Database reset to clean state.')
   } catch (error) {
     console.error('Error clearing data:', error)

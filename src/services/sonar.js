@@ -14,7 +14,7 @@ import { createProxyDispatcher } from '#/common/helpers/proxy.js'
  */
 
 // Overall (whole-branch) metrics shown on a repository's main branch.
-const BRANCH_METRIC_KEYS = [
+export const BRANCH_METRIC_KEYS = [
   'alert_status',
   'reliability_rating',
   'security_rating',
@@ -29,7 +29,8 @@ const BRANCH_METRIC_KEYS = [
 ]
 
 // New-code metrics — the meaningful figures for a single pull request.
-const PR_METRIC_KEYS = [
+export const PR_METRIC_KEYS = [
+  'alert_status',
   'reliability_rating',
   'security_rating',
   'sqale_rating',
@@ -40,7 +41,10 @@ const PR_METRIC_KEYS = [
   'new_violations',
   'new_security_hotspots',
   'new_duplicated_lines_density',
-  'new_lines'
+  'new_lines',
+  'new_sqale_debt_ratio',
+  'new_software_quality_blocker_issues',
+  'new_software_quality_high_issues'
 ]
 
 const RATING_LETTER = { 1: 'A', 2: 'B', 3: 'C', 4: 'D', 5: 'E' }
@@ -104,13 +108,30 @@ function ratingLetter(value) {
 function flattenMeasures(response) {
   const measures = response?.component?.measures ?? []
   return Object.fromEntries(
-    measures.map((measure) => [
-      measure.metric,
-      toNumber(
+    measures.map((measure) => {
+      const raw =
         measure.value ?? measure.period?.value ?? measure.periods?.[0]?.value
-      )
-    ])
+      return [
+        measure.metric,
+        measure.metric === 'alert_status' ? (raw ?? null) : toNumber(raw)
+      ]
+    })
   )
+}
+
+/** The last value of each metric in a `measures/search_history` response. */
+function historyMeasures(response) {
+  return Object.fromEntries(
+    (response?.measures ?? []).map(({ metric, history = [] }) => {
+      const raw = history.at(-1)?.value
+      return [metric, metric === 'alert_status' ? (raw ?? null) : toNumber(raw)]
+    })
+  )
+}
+
+// Sonar Web API v1 datetime parameters take `yyyy-MM-ddTHH:mm:ss+0000`.
+function sonarDateTime(date) {
+  return `${date.toISOString().slice(0, 19)}+0000`
 }
 
 function mapGateStatus(status) {
@@ -131,6 +152,15 @@ function ratingsFrom(measures) {
     reliability: ratingLetter(measures.reliability_rating),
     security: ratingLetter(measures.security_rating),
     maintainability: ratingLetter(measures.sqale_rating)
+  }
+}
+
+/** The headline measures shown on each portfolio card. */
+export function overviewMeasures(measures = {}) {
+  return {
+    coverage: toNumber(measures.coverage),
+    bugs: toNumber(measures.bugs),
+    vulnerabilities: toNumber(measures.vulnerabilities)
   }
 }
 
@@ -238,7 +268,7 @@ export function createSonarClient(options = {}) {
   }
 
   /** Main-branch quality for one repository. */
-  async function getRepoMetrics(repository) {
+  async function getRepoMetrics(repository, { asOf, db } = {}) {
     if (!isConfigured()) {
       return { configured: false }
     }
@@ -248,26 +278,45 @@ export function createSonarClient(options = {}) {
       return { configured: true, linked: false, repository }
     }
 
-    try {
-      const [measuresResponse, statusResponse] = await Promise.all([
-        sonarGet('/api/measures/component', {
-          component: projectKey,
-          metricKeys: BRANCH_METRIC_KEYS.join(',')
-        }),
-        sonarGet('/api/qualitygates/project_status', { projectKey })
-      ])
+    const asOfDate = asOf ? new Date(asOf) : null
+    const historical = Boolean(asOfDate) && asOfDate.getTime() < Date.now()
+    const url = `${apiBase}/project/overview?id=${encodeURIComponent(projectKey)}`
 
-      const measures = flattenMeasures(measuresResponse)
-
-      return {
-        configured: true,
-        repository,
-        projectKey,
-        url: `${apiBase}/project/overview?id=${encodeURIComponent(projectKey)}`,
-        qualityGate: mapGateStatus(statusResponse?.projectStatus?.status),
-        ratings: ratingsFrom(measures),
-        measures
+    // A closed sprint's snapshot never changes, so it is served from the store.
+    if (historical && db) {
+      const snapshot = await db
+        .collection('sonar-snapshots')
+        .findOne({ repository, asOf: asOfDate })
+      if (snapshot) {
+        return { configured: true, url, ...snapshot }
       }
+    }
+
+    try {
+      const result = historical
+        ? await metricsAsAt(repository, projectKey, asOfDate)
+        : await currentMetrics(repository, projectKey)
+
+      if (historical && db) {
+        await db.collection('sonar-snapshots').updateOne(
+          { repository, asOf: asOfDate },
+          {
+            $set: {
+              repository,
+              projectKey,
+              asOf: asOfDate,
+              analysisDate: result.analysisDate,
+              qualityGate: result.qualityGate,
+              ratings: result.ratings,
+              measures: result.measures,
+              capturedAt: new Date()
+            }
+          },
+          { upsert: true }
+        )
+      }
+
+      return { ...result, url }
     } catch (error) {
       // A 404 means the mapped project key does not exist or has not been
       // analysed yet — treat it as "not linked" so the panel hides.
@@ -281,8 +330,76 @@ export function createSonarClient(options = {}) {
     }
   }
 
+  async function currentMetrics(repository, projectKey) {
+    const [measuresResponse, statusResponse] = await Promise.all([
+      sonarGet('/api/measures/component', {
+        component: projectKey,
+        metricKeys: BRANCH_METRIC_KEYS.join(',')
+      }),
+      sonarGet('/api/qualitygates/project_status', { projectKey })
+    ])
+    const measures = flattenMeasures(measuresResponse)
+    return {
+      configured: true,
+      repository,
+      projectKey,
+      qualityGate: mapGateStatus(statusResponse?.projectStatus?.status),
+      ratings: ratingsFrom(measures),
+      measures
+    }
+  }
+
+  /**
+   * Main-branch quality as at a past cut-off: the last analysis on or before
+   * it, its measures from the measure history, and that analysis's gate.
+   * `analysisDate` is null when nothing was analysed before the cut-off.
+   */
+  async function metricsAsAt(repository, projectKey, asOfDate) {
+    const base = {
+      configured: true,
+      repository,
+      projectKey,
+      asOf: asOfDate.toISOString()
+    }
+    const analyses = await sonarGet('/api/project_analyses/search', {
+      project: projectKey,
+      to: sonarDateTime(asOfDate),
+      ps: '1'
+    })
+    const analysis = analyses?.analyses?.[0]
+    if (!analysis) {
+      return {
+        ...base,
+        analysisDate: null,
+        qualityGate: 'none',
+        ratings: ratingsFrom({}),
+        measures: {}
+      }
+    }
+
+    const [history, statusResponse] = await Promise.all([
+      sonarGet('/api/measures/search_history', {
+        component: projectKey,
+        metrics: BRANCH_METRIC_KEYS.join(','),
+        from: analysis.date,
+        to: analysis.date
+      }),
+      sonarGet('/api/qualitygates/project_status', {
+        analysisId: analysis.key
+      })
+    ])
+    const measures = historyMeasures(history)
+    return {
+      ...base,
+      analysisDate: new Date(analysis.date).toISOString(),
+      qualityGate: mapGateStatus(statusResponse?.projectStatus?.status),
+      ratings: ratingsFrom(measures),
+      measures
+    }
+  }
+
   /** New-code quality for one pull request. */
-  async function getPrMetrics(repository, prNumber) {
+  async function getPrMetrics(repository, prNumber, { db } = {}) {
     if (!isConfigured()) {
       return { configured: false }
     }
@@ -292,8 +409,22 @@ export function createSonarClient(options = {}) {
       return { configured: true, linked: false, repository }
     }
 
+    const prNum = Number(prNumber)
     const pullRequest = String(prNumber)
     const url = `${apiBase}/summary/new_code?id=${encodeURIComponent(projectKey)}&pullRequest=${encodeURIComponent(pullRequest)}`
+
+    if (db) {
+      const snapshot = await db
+        .collection('sonar-pr-snapshots')
+        .findOne({ repository, prNumber: prNum })
+      if (snapshot) {
+        return {
+          configured: true,
+          url,
+          ...snapshot
+        }
+      }
+    }
 
     try {
       const [measuresResponse, statusResponse] = await Promise.all([
@@ -309,18 +440,45 @@ export function createSonarClient(options = {}) {
       ])
 
       const measures = flattenMeasures(measuresResponse)
+      const firstScanQualityGate = mapGateStatus(
+        statusResponse?.projectStatus?.status
+      )
 
-      return {
+      const result = {
         configured: true,
         repository,
         projectKey,
-        prNumber,
+        prNumber: prNum,
         url,
         analyzed: true,
-        qualityGate: mapGateStatus(statusResponse?.projectStatus?.status),
+        qualityGate: firstScanQualityGate,
+        firstScanQualityGate,
         ratings: ratingsFrom(measures),
         measures
       }
+
+      if (db) {
+        await db.collection('sonar-pr-snapshots').updateOne(
+          { repository, prNumber: prNum },
+          {
+            $set: {
+              repository,
+              projectKey,
+              prNumber: prNum,
+              url,
+              analyzed: true,
+              qualityGate: firstScanQualityGate,
+              firstScanQualityGate,
+              ratings: result.ratings,
+              measures: result.measures,
+              capturedAt: new Date()
+            }
+          },
+          { upsert: true }
+        )
+      }
+
+      return result
     } catch (error) {
       // A 404 means SonarCloud has never analysed this PR — surface a
       // "not analysed" result rather than a hard error.
@@ -329,7 +487,7 @@ export function createSonarClient(options = {}) {
           configured: true,
           repository,
           projectKey,
-          prNumber,
+          prNumber: prNum,
           url,
           analyzed: false,
           qualityGate: 'none',
@@ -342,17 +500,17 @@ export function createSonarClient(options = {}) {
   }
 
   /**
-   * Main-branch quality-gate status for every linked repository — powers the
-   * portfolio "N passed / N warning / N failed" summary.
+   * Main-branch quality gate and headline measures for every linked
+   * repository — powers the portfolio repository cards.
    */
-  async function getOverview() {
+  async function getOverview({ asOf, db } = {}) {
     if (!isConfigured()) {
       return { configured: false }
     }
 
     const repositories = Object.keys(projectMap)
     const results = await Promise.allSettled(
-      repositories.map((repository) => getRepoMetrics(repository))
+      repositories.map((repository) => getRepoMetrics(repository, { asOf, db }))
     )
 
     return results.flatMap((result, index) => {
@@ -365,7 +523,12 @@ export function createSonarClient(options = {}) {
             repository,
             projectKey: metrics.projectKey,
             url: metrics.url,
-            qualityGate: metrics.qualityGate
+            qualityGate: metrics.qualityGate,
+            measures: overviewMeasures(metrics.measures),
+            ...(metrics.asOf && {
+              asOf: new Date(metrics.asOf).toISOString(),
+              analysisDate: metrics.analysisDate ?? null
+            })
           }
         ]
       }

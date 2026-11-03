@@ -1,7 +1,7 @@
 {
   "name": "mmo-cr-copilot-backend",
   "version": "0.0.0",
-  "description": "Copilot analytics backend \u2014 ingests pull request analytics payloads, persists them to MongoDB and serves them to the dashboard alongside SonarCloud code quality metrics",
+  "description": "Copilot analytics backend — ingests pull request analytics payloads, persists them to MongoDB and serves them to the dashboard alongside SonarCloud code quality metrics",
   "main": "src/index.js",
   "type": "module",
   "engines": {
@@ -9,9 +9,9 @@
   },
   "scripts": {
     "db:clear": "node scripts/clear-mock-data.js",
-    "db:seed": "node scripts/seed-mock-data.js",
-    "dev": "AWS_EMF_ENVIRONMENT=Local NODE_ENV=development npm run server:watch",
-    "dev:debug": "AWS_EMF_ENVIRONMENT=Local NODE_ENV=development npm run server:debug",
+    "db:seed": "node --env-file-if-exists=.env scripts/seed-mock-data.js",
+    "dev": "AWS_EMF_ENVIRONMENT=Local NODE_ENV=development SONAR_SNAPSHOT_FALLBACK=true npm run server:watch",
+    "dev:debug": "AWS_EMF_ENVIRONMENT=Local NODE_ENV=development SONAR_SNAPSHOT_FALLBACK=true npm run server:debug",
     "docker:dev": "npm run dev",
     "format": "prettier --write \"**/*.{cjs,js,json,md}\"",
     "format:check": "prettier --check \"**/*.{cjs,js,json,md}\"",
@@ -47,6 +47,7 @@
     "hapi-pino": "13.0.0",
     "hapi-pulse": "4.0.0",
     "joi": "18.2.5",
+    "jose": "6.2.12",
     "mongo-locks": "3.2.0",
     "mongodb": "7.6.0",
     "pino": "10.3.1",

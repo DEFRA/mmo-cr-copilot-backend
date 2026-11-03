@@ -1,9 +1,15 @@
 import { MongoClient } from 'mongodb'
 import { LockManager } from 'mongo-locks'
 
+import { config } from '#/config.js'
 import { AUDIT_LOGS_COLLECTION } from '#/services/audit-logs.js'
 import { PAYLOADS_COLLECTION } from '#/services/payloads.js'
 import { PERSONA_MAPPINGS_COLLECTION } from '#/services/persona-mappings.js'
+import {
+  ROLE_MAPPINGS_COLLECTION,
+  ensureBootstrapAdmin
+} from '#/services/role-mappings.js'
+import { SURVIVAL_COLLECTION } from '#/services/survival.js'
 
 export const mongoDb = {
   plugin: {
@@ -99,4 +105,155 @@ async function createIndexes(db, logger) {
     .createIndex({ githubHandle: 1 })
   // Serves the audit trail's newest-first ordering and its date-range filter.
   await db.collection(AUDIT_LOGS_COLLECTION).createIndex({ occurredAt: -1 })
+  await db
+    .collection(AUDIT_LOGS_COLLECTION)
+    .createIndex({ projectSlug: 1, occurredAt: -1 })
+
+  await migrateRoleMappingKey(db, logger)
+  // Group names are matched exactly as the token emits them (case-sensitive).
+  await db
+    .collection(ROLE_MAPPINGS_COLLECTION)
+    .createIndex({ groupName: 1, projectSlug: 1 }, { unique: true })
+  await db.collection(ROLE_MAPPINGS_COLLECTION).createIndex({ role: 1 })
+
+  await db.collection('projects').createIndex({ slug: 1 }, { unique: true })
+  await db
+    .collection('repositories')
+    .createIndex({ fullName: 1 }, { unique: true })
+  await db.collection('repositories').createIndex({ projectSlug: 1 })
+  await db
+    .collection(PAYLOADS_COLLECTION)
+    .createIndex({ projectSlug: 1, calculatedAt: -1 })
+
+  await db
+    .collection('sonar-snapshots')
+    .createIndex({ repository: 1, asOf: 1 }, { unique: true })
+  await db
+    .collection('sonar-pr-snapshots')
+    .createIndex({ repository: 1, prNumber: 1 }, { unique: true })
+
+  // One survival record per pull request and window; ingest upserts on this key.
+  await db
+    .collection(SURVIVAL_COLLECTION)
+    .createIndex(
+      { repository: 1, prNumber: 1, windowDays: 1 },
+      { unique: true }
+    )
+  // Serves the project churn query: window, project and merge date range.
+  await db
+    .collection(SURVIVAL_COLLECTION)
+    .createIndex({ projectSlug: 1, windowDays: 1, mergedAt: -1 })
+
+  await db.collection('jira-issues').createIndex({ key: 1 }, { unique: true })
+  await db
+    .collection('jira-sprint-scope')
+    .createIndex({ sprintId: 1 }, { unique: true })
+  await db
+    .collection('jira-issues')
+    .createIndex({ projectSlug: 1, resolved: -1 })
+  await db
+    .collection('pr-jira-links')
+    .createIndex(
+      { projectSlug: 1, jiraKey: 1, repository: 1, prNumber: 1 },
+      { unique: true }
+    )
+
+  await migrateDefaultProject(db, logger)
+  await removeProjectGroupFields(db, logger)
+  await ensureBootstrapAdmin(db, {
+    groupName: config.get('auth.bootstrapAdminGroup'),
+    logger
+  })
+}
+
+/**
+ * Role mappings were first stored with the group name in `groupId`. Rename it
+ * to `groupName` and drop the old unique index before the new one is built;
+ * both steps are no-ops on a database that is already migrated.
+ */
+export async function migrateRoleMappingKey(db, logger) {
+  const collection = db.collection(ROLE_MAPPINGS_COLLECTION)
+  const { modifiedCount } = await collection.updateMany(
+    { groupName: { $exists: false }, groupId: { $exists: true } },
+    [{ $set: { groupName: '$groupId' } }, { $unset: 'groupId' }]
+  )
+  try {
+    await collection.dropIndex('groupId_1_projectSlug_1')
+  } catch (error) {
+    // 27 (IndexNotFound) and 26 (NamespaceNotFound): nothing to drop.
+    if (![26, 27].includes(error?.code)) throw error
+  }
+  if (modifiedCount > 0) {
+    logger?.info(
+      `Renamed groupId to groupName on ${modifiedCount} role mapping(s)`
+    )
+  }
+}
+
+/** Authorisation lives only in role_mappings; drop the retired project group arrays. */
+export async function removeProjectGroupFields(db, logger) {
+  const { modifiedCount } = await db.collection('projects').updateMany(
+    {
+      $or: [
+        { adminGroupIds: { $exists: true } },
+        { entraGroupIds: { $exists: true } }
+      ]
+    },
+    { $unset: { adminGroupIds: '', entraGroupIds: '' } }
+  )
+  if (modifiedCount > 0) {
+    logger?.info(
+      `Removed retired group arrays from ${modifiedCount} project(s)`
+    )
+  }
+}
+
+export async function migrateDefaultProject(db, logger) {
+  const projectCount = await db.collection('projects').countDocuments()
+  if (projectCount === 0) {
+    await db.collection('projects').insertOne({
+      slug: 'FES',
+      name: 'MMO Catch Recording',
+      type: 'ai-adopted',
+      adoptionStartDate: new Date('2026-01-01T00:00:00.000Z'),
+      sprintCalendar: {
+        cadenceDays: 14,
+        anchorDate: new Date('2026-07-08T00:00:00.000Z')
+      },
+      jira: {
+        projectKeys: ['MMOCR'],
+        storyPointsField: 'customfield_10016'
+      },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      archivedAt: null
+    })
+
+    const repos = await db
+      .collection(PAYLOADS_COLLECTION)
+      .distinct('repository')
+    const now = new Date()
+    for (const fullName of repos) {
+      await db.collection('repositories').updateOne(
+        { fullName },
+        {
+          $set: {
+            fullName,
+            projectSlug: 'FES',
+            mappedAt: now
+          }
+        },
+        { upsert: true }
+      )
+    }
+
+    await db
+      .collection(PAYLOADS_COLLECTION)
+      .updateMany(
+        { projectSlug: { $in: [null, undefined] } },
+        { $set: { projectSlug: 'FES' } }
+      )
+
+    logger?.info('Migrated default project and repository mappings')
+  }
 }

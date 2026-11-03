@@ -9,13 +9,17 @@ import Joi from 'joi'
 
 export const AUDIT_ENTITIES = {
   commitClassification: 'commit-classification',
-  personaMapping: 'persona-mapping'
+  personaMapping: 'persona-mapping',
+  roleMapping: 'role-mapping'
 }
 
 export const AUDIT_ACTIONS = {
   commitClassificationUpdated: 'commit-classification.updated',
   personaMappingUpserted: 'persona-mapping.upserted',
-  personaMappingDeleted: 'persona-mapping.deleted'
+  personaMappingDeleted: 'persona-mapping.deleted',
+  roleMappingCreated: 'role-mapping.created',
+  roleMappingUpdated: 'role-mapping.updated',
+  roleMappingDeleted: 'role-mapping.deleted'
 }
 
 const MAX_PAGE_SIZE = 200

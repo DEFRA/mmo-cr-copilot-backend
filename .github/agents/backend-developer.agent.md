@@ -3,6 +3,7 @@ description: 'Expert Node.js backend developer for the DEFRA/MMO Copilot analyti
 name: 'Backend Developer'
 tools: [vscode, execute, read, agent, edit, search, web, todo]
 argument-hint: 'Describe the backend feature, fix or refactor you want.'
+model: Claude Sonnet 5.5 (copilot)
 agents: ['Backend Planner', 'Explore']
 ---
 

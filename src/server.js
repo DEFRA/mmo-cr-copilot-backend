@@ -6,14 +6,17 @@ import { config } from '#/config.js'
 import { router } from '#/plugins/router.js'
 import { requestLogger } from '#/plugins/request-logger.js'
 import { mongoDb } from '#/plugins/mongodb.js'
+import { entraAuth } from '#/plugins/entra-auth.js'
 import { sonar } from '#/plugins/sonar.js'
+import { jiraSync } from '#/plugins/jira-sync.js'
 import { failAction } from '#/common/helpers/fail-action.js'
 import { pulse } from '#/plugins/pulse.js'
 import { requestTracing } from '#/plugins/request-tracing.js'
 import { securityHeaders } from '#/plugins/security-headers.js'
 import { metrics } from '@defra/cdp-metrics'
 
-export async function createServer() {
+// options.jwks replaces the remote Entra signing keys (tests only).
+export async function createServer(options = {}) {
   const server = Hapi.server({
     host: config.get('host'),
     port: config.get('port'),
@@ -48,6 +51,7 @@ export async function createServer() {
   // pulse           - provides shutdown handlers
   // mongoDb         - sets up mongo connection pool and attaches to `server` and `request` objects
   // sonar           - SonarCloud client attached to `server` and `request` objects
+  // entraAuth       - default bearer-token auth strategy for every route
   // router          - routes used in the app
   await server.register([
     requestLogger,
@@ -61,6 +65,8 @@ export async function createServer() {
       options: config.get('mongo')
     },
     sonar,
+    jiraSync,
+    { plugin: entraAuth, options: { jwks: options.jwks } },
     router
   ])
 

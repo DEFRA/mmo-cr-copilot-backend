@@ -8,6 +8,7 @@ const statusServiceUnavailable = 503
 export const health = {
   method: 'GET',
   path: '/health',
+  options: { auth: false },
   handler: async (request, h) => {
     try {
       await request.db.admin().ping()

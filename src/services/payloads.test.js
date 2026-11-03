@@ -1,4 +1,8 @@
-import { buildPayload } from '#/test-helpers/payload-fixture.js'
+import {
+  buildAttribution,
+  buildPayload,
+  buildPayloadV2
+} from '#/test-helpers/payload-fixture.js'
 
 describe('#payloads service', () => {
   let server
@@ -19,11 +23,76 @@ describe('#payloads service', () => {
     await server.stop({ timeout: 1000 })
   })
 
+  const latestPayloads = async (database) =>
+    (
+      await database
+        .collection(service.PAYLOADS_COLLECTION)
+        .find({})
+        .sort({ calculatedAt: -1 })
+        .toArray()
+    ).map(service.toPayload)
+
   beforeEach(async () => {
     await db.collection(service.PAYLOADS_COLLECTION).deleteMany({})
   })
 
   describe('#savePayload', () => {
+    test('Should skip a backfill when a live merged payload exists', async () => {
+      await service.savePayload(db, buildPayloadV2(), server.logger)
+
+      const result = await service.savePayload(
+        db,
+        buildPayloadV2({
+          source: 'backfill',
+          calculatedAt: '2026-02-01T00:00:00.000Z',
+          prTitle: 'Backfilled'
+        }),
+        server.logger
+      )
+
+      expect(result.stored).toBe(false)
+      const stored = await db
+        .collection(service.PAYLOADS_COLLECTION)
+        .findOne({})
+      expect(stored.prTitle).toBe('MMO-123 Add cycle time scatter')
+    })
+
+    test('Should store a backfill when no live payload exists', async () => {
+      const result = await service.savePayload(
+        db,
+        buildPayloadV2({ source: 'backfill' }),
+        server.logger
+      )
+
+      expect(result.stored).toBe(true)
+    })
+    test('Should link the PR to its Jira keys when the repository is mapped', async () => {
+      const { PR_JIRA_LINKS_COLLECTION, findPrLinks } =
+        await import('./pr-jira-links.js')
+      await db.collection('repositories').deleteMany({})
+      await db.collection(PR_JIRA_LINKS_COLLECTION).deleteMany({})
+      await db.collection('repositories').insertOne({
+        fullName: 'DEFRA/mmo-cr-copilot-dashboard',
+        projectSlug: 'mmo'
+      })
+
+      const result = await service.savePayload(
+        db,
+        buildPayloadV2(),
+        server.logger
+      )
+
+      expect(result.projectSlug).toBe('mmo')
+      await expect(
+        findPrLinks(db, {
+          projectSlug: 'mmo',
+          repository: 'DEFRA/mmo-cr-copilot-dashboard',
+          prNumber: 42
+        })
+      ).resolves.toEqual([{ jiraKey: 'MMO-123', source: 'payload' }])
+      await db.collection('repositories').deleteMany({})
+    })
+
     test('Should store dates as BSON dates so they sort chronologically', async () => {
       await service.savePayload(db, buildPayload(), server.logger)
 
@@ -146,48 +215,52 @@ describe('#payloads service', () => {
     })
   })
 
-  describe('#findLatestPayloads', () => {
-    test('Should return the newest payload per repository and PR, newest first', async () => {
-      await service.savePayload(db, buildPayload({ buildId: 'old' }))
-      await service.savePayload(
-        db,
-        buildPayload({
-          buildId: 'new',
-          calculatedAt: '2026-01-16T10:00:00.000Z'
-        })
-      )
-      await service.savePayload(
-        db,
-        buildPayload({
-          prNumber: 43,
-          buildId: 'other-pr',
-          calculatedAt: '2026-01-17T10:00:00.000Z'
-        })
-      )
+  describe('When payloads use contract v2', () => {
+    test('Should round-trip every v2 field', async () => {
+      const payload = buildPayloadV2()
+      await service.savePayload(db, payload, server.logger)
 
-      const results = await service.findLatestPayloads(db)
+      const [result] = await latestPayloads(db)
 
-      expect(results.map((payload) => payload.buildId)).toEqual([
-        'other-pr',
-        'new'
-      ])
+      expect(result).toMatchObject({
+        schemaVersion: 2,
+        source: 'live',
+        prTitle: payload.prTitle,
+        jiraKeys: payload.jiraKeys,
+        files: payload.files
+      })
+      expect(result.commitBreakdown[0].attribution).toEqual(buildAttribution())
     })
 
-    test('Should return ISO strings and strip storage internals', async () => {
-      await service.savePayload(db, buildPayload())
+    test('Should read a stored v1 document as v1 without inventing v2 fields', async () => {
+      const doc = buildPayload()
+      await db.collection(service.PAYLOADS_COLLECTION).insertOne({
+        ...doc,
+        calculatedAt: new Date(doc.calculatedAt)
+      })
 
-      const [result] = await service.findLatestPayloads(db)
+      const [result] = await latestPayloads(db)
 
-      expect(result.calculatedAt).toBe('2026-01-15T10:00:00.000Z')
-      expect(result.commitBreakdown[0].committedAt).toBe(
-        '2026-01-15T09:45:00.000Z'
-      )
-      expect(result).not.toHaveProperty('_id')
-      expect(result).not.toHaveProperty('receivedAt')
+      expect(result.schemaVersion).toBe(1)
+      expect(result).not.toHaveProperty('jiraKeys')
+      expect(result).not.toHaveProperty('files')
+      expect(result).not.toHaveProperty('source')
+      expect(result).not.toHaveProperty('prTitle')
+      expect(result.commitBreakdown[0]).not.toHaveProperty('attribution')
     })
 
-    test('Should return an empty array when nothing is stored', async () => {
-      await expect(service.findLatestPayloads(db)).resolves.toEqual([])
+    test('Should replace a stored v1 record with a newer v2 payload', async () => {
+      await service.savePayload(db, buildPayload(), server.logger)
+      await service.savePayload(
+        db,
+        buildPayloadV2({ calculatedAt: '2026-01-16T10:00:00.000Z' }),
+        server.logger
+      )
+
+      const [result] = await latestPayloads(db)
+
+      expect(result.schemaVersion).toBe(2)
+      expect(result.jiraKeys).toEqual(['MMO-123'])
     })
   })
 
@@ -376,6 +449,53 @@ describe('#payloads service', () => {
 
       expect(commit.classification).toBe('Copilot-assisted')
       expect(stored.summary.copilotAssistedCommits).toBe(2)
+    })
+
+    describe('When the payload carries attribution', () => {
+      const withAttribution = (overrides = {}) => {
+        const payload = twoCommitPayload(overrides)
+        return buildPayloadV2({
+          ...payload,
+          commitBreakdown: payload.commitBreakdown.map((commit) => ({
+            ...commit,
+            attribution: buildAttribution({ source: 'none' })
+          }))
+        })
+      }
+
+      test('Should keep attribution when a commit is re-classified', async () => {
+        await service.savePayload(db, withAttribution(), server.logger)
+
+        const { payload } = await update()
+        const commit = payload.commitBreakdown.find(
+          (c) => c.commit === 'def5678'
+        )
+
+        expect(commit.classification).toBe('Copilot-assisted')
+        expect(commit.attribution).toEqual({ source: 'none' })
+      })
+
+      test('Should keep attribution when a correction is re-applied on ingest', async () => {
+        await service.savePayload(db, withAttribution(), server.logger)
+        await update()
+
+        await service.savePayload(
+          db,
+          withAttribution({
+            buildId: 'build-1002',
+            calculatedAt: '2026-01-16T10:00:00.000Z'
+          }),
+          server.logger
+        )
+
+        const stored = await service.findLatestPayloadForPr(db, REPOSITORY, 42)
+        const commit = stored.commitBreakdown.find(
+          (c) => c.commit === 'def5678'
+        )
+
+        expect(commit.classification).toBe('Copilot-assisted')
+        expect(commit.attribution).toEqual({ source: 'none' })
+      })
     })
   })
 })

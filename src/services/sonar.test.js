@@ -1,4 +1,4 @@
-import { createSonarClient } from './sonar.js'
+import { createSonarClient, PR_METRIC_KEYS } from './sonar.js'
 
 const PROJECT_MAP = JSON.stringify({
   'DEFRA/repo-one': 'DEFRA_repo-one',
@@ -16,6 +16,50 @@ function createLoggerStub() {
     warn: vi.fn(),
     error: vi.fn(),
     debug: vi.fn()
+  }
+}
+
+function createMockDb() {
+  const collections = new Map()
+  return {
+    collection: (name) => {
+      if (!collections.has(name)) {
+        const docs = []
+        collections.set(name, {
+          docs,
+          findOne: vi.fn(async (query) => {
+            return (
+              docs.find((d) =>
+                Object.entries(query).every(([k, v]) => {
+                  if (v instanceof Date) return d[k]?.getTime() === v.getTime()
+                  return d[k] === v
+                })
+              ) ?? null
+            )
+          }),
+          updateOne: vi.fn(async (filter, update, options) => {
+            const doc = update.$set ?? update
+            const existingIdx = docs.findIndex((d) =>
+              Object.entries(filter).every(([k, v]) => {
+                if (v instanceof Date) return d[k]?.getTime() === v.getTime()
+                return d[k] === v
+              })
+            )
+            if (existingIdx >= 0) {
+              docs[existingIdx] = { ...docs[existingIdx], ...doc }
+            } else if (options?.upsert) {
+              docs.push({ ...doc })
+            }
+            return { acknowledged: true }
+          }),
+          insertOne: vi.fn(async (doc) => {
+            docs.push({ ...doc })
+            return { acknowledged: true, insertedId: 'mock-id' }
+          })
+        })
+      }
+      return collections.get(name)
+    }
   }
 }
 
@@ -44,6 +88,13 @@ const client = (options = {}) =>
 
 describe('#createSonarClient', () => {
   describe('Configuration', () => {
+    test('Should include required PR metric keys for delivery and sprint tracking', () => {
+      expect(PR_METRIC_KEYS).toContain('alert_status')
+      expect(PR_METRIC_KEYS).toContain('new_sqale_debt_ratio')
+      expect(PR_METRIC_KEYS).toContain('new_software_quality_blocker_issues')
+      expect(PR_METRIC_KEYS).toContain('new_software_quality_high_issues')
+    })
+
     test('Should report not configured without a project map', () => {
       expect(client({ projectMap: '' }).isConfigured()).toBe(false)
     })
@@ -182,6 +233,118 @@ describe('#createSonarClient', () => {
       })
     })
 
+    test('Should return cached snapshot when asOf and db are provided and snapshot exists', async () => {
+      const db = createMockDb()
+      const asOf = new Date('2026-02-01T00:00:00.000Z')
+      await db.collection('sonar-snapshots').insertOne({
+        repository: 'DEFRA/repo-one',
+        projectKey: 'DEFRA_repo-one',
+        asOf,
+        qualityGate: 'passed',
+        ratings: { reliability: 'A', security: 'A', maintainability: 'A' },
+        measures: { coverage: 92 },
+        capturedAt: new Date()
+      })
+
+      const result = await client().getRepoMetrics('DEFRA/repo-one', {
+        asOf,
+        db
+      })
+
+      expect(result).toMatchObject({
+        configured: true,
+        repository: 'DEFRA/repo-one',
+        qualityGate: 'passed',
+        measures: { coverage: 92 }
+      })
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    test('Should read the last analysis before a past cut-off and store it', async () => {
+      const db = createMockDb()
+      const asOf = new Date('2026-07-21T23:59:59.000Z')
+
+      mockSonar({
+        '/api/project_analyses/search': (request) => {
+          expect(request.url).toContain('to=2026-07-21T23%3A59%3A59%2B0000')
+          return JSON.stringify({
+            analyses: [{ key: 'AX1', date: '2026-07-20T10:15:00+0000' }]
+          })
+        },
+        '/api/measures/search_history': () =>
+          JSON.stringify({
+            measures: [
+              {
+                metric: 'coverage',
+                history: [{ date: '2026-07-20T10:15:00+0000', value: '85' }]
+              },
+              {
+                metric: 'reliability_rating',
+                history: [{ date: '2026-07-20T10:15:00+0000', value: '1' }]
+              }
+            ]
+          }),
+        '/api/qualitygates/project_status': (request) => {
+          expect(request.url).toContain('analysisId=AX1')
+          return statusResponse('OK')
+        }
+      })
+
+      const result = await client().getRepoMetrics('DEFRA/repo-one', {
+        asOf,
+        db
+      })
+
+      expect(result).toMatchObject({
+        qualityGate: 'passed',
+        asOf: '2026-07-21T23:59:59.000Z',
+        analysisDate: '2026-07-20T10:15:00.000Z',
+        ratings: { reliability: 'A' },
+        measures: { coverage: 85 }
+      })
+      const stored = await db.collection('sonar-snapshots').findOne({
+        repository: 'DEFRA/repo-one',
+        asOf
+      })
+      expect(stored.analysisDate).toBe('2026-07-20T10:15:00.000Z')
+      expect(stored.measures.coverage).toBe(85)
+    })
+
+    test('Should report no analysis before the cut-off', async () => {
+      mockSonar({
+        '/api/project_analyses/search': () => JSON.stringify({ analyses: [] })
+      })
+
+      const result = await client().getRepoMetrics('DEFRA/repo-one', {
+        asOf: new Date('2020-01-01T00:00:00.000Z')
+      })
+
+      expect(result).toMatchObject({
+        configured: true,
+        analysisDate: null,
+        qualityGate: 'none',
+        measures: {}
+      })
+    })
+
+    test('Should fetch and not store snapshot when asOf is in the future', async () => {
+      const db = createMockDb()
+      const asOf = new Date(Date.now() + 86400000)
+
+      mockSonar({
+        '/api/measures/component': () => measuresResponse([]),
+        '/api/qualitygates/project_status': () => statusResponse('OK')
+      })
+
+      await client().getRepoMetrics('DEFRA/repo-one', { asOf, db })
+
+      const stored = await db.collection('sonar-snapshots').findOne({
+        repository: 'DEFRA/repo-one',
+        asOf
+      })
+      expect(stored).toBeNull()
+    })
+
     test('Should propagate other upstream failures', async () => {
       fetchMock.mockResponse('boom', { status: 500 })
 
@@ -234,6 +397,64 @@ describe('#createSonarClient', () => {
         }
       )
     })
+
+    test('Should return cached PR snapshot from db without fetching', async () => {
+      const db = createMockDb()
+      await db.collection('sonar-pr-snapshots').insertOne({
+        repository: 'DEFRA/repo-one',
+        prNumber: 42,
+        analyzed: true,
+        qualityGate: 'passed',
+        firstScanQualityGate: 'passed',
+        ratings: { reliability: 'A', security: 'A', maintainability: 'A' },
+        measures: { new_coverage: 99 }
+      })
+
+      const result = await client().getPrMetrics('DEFRA/repo-one', 42, { db })
+
+      expect(result).toMatchObject({
+        configured: true,
+        analyzed: true,
+        prNumber: 42,
+        firstScanQualityGate: 'passed',
+        measures: { new_coverage: 99 }
+      })
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    test('Should snapshot analyzed PR into sonar-pr-snapshots with firstScanQualityGate', async () => {
+      const db = createMockDb()
+      mockSonar({
+        '/api/measures/component': () =>
+          measuresResponse([{ metric: 'new_coverage', value: '91' }]),
+        '/api/qualitygates/project_status': () => statusResponse('OK')
+      })
+
+      const result = await client().getPrMetrics('DEFRA/repo-one', 15, { db })
+
+      expect(result.firstScanQualityGate).toBe('passed')
+      const stored = await db.collection('sonar-pr-snapshots').findOne({
+        repository: 'DEFRA/repo-one',
+        prNumber: 15
+      })
+      expect(stored).not.toBeNull()
+      expect(stored.firstScanQualityGate).toBe('passed')
+      expect(stored.analyzed).toBe(true)
+    })
+
+    test('Should not snapshot unanalysed PR into db', async () => {
+      const db = createMockDb()
+      fetchMock.mockResponse('missing', { status: 404 })
+
+      const result = await client().getPrMetrics('DEFRA/repo-one', 16, { db })
+
+      expect(result.analyzed).toBe(false)
+      const stored = await db.collection('sonar-pr-snapshots').findOne({
+        repository: 'DEFRA/repo-one',
+        prNumber: 16
+      })
+      expect(stored).toBeNull()
+    })
   })
 
   describe('#getOverview', () => {
@@ -250,15 +471,64 @@ describe('#createSonarClient', () => {
           repository: 'DEFRA/repo-one',
           projectKey: 'DEFRA_repo-one',
           url: 'https://sonarcloud.io/project/overview?id=DEFRA_repo-one',
-          qualityGate: 'passed'
+          qualityGate: 'passed',
+          measures: { coverage: null, bugs: null, vulnerabilities: null }
         },
         {
           repository: 'DEFRA/repo-two',
           projectKey: 'DEFRA_repo-two',
           url: 'https://sonarcloud.io/project/overview?id=DEFRA_repo-two',
-          qualityGate: 'passed'
+          qualityGate: 'passed',
+          measures: { coverage: null, bugs: null, vulnerabilities: null }
         }
       ])
+    })
+
+    test('Should pass asOf and db to repo metrics lookup', async () => {
+      const db = createMockDb()
+      const asOf = new Date('2026-02-01T00:00:00.000Z')
+      await db.collection('sonar-snapshots').insertOne({
+        repository: 'DEFRA/repo-one',
+        projectKey: 'DEFRA_repo-one',
+        asOf,
+        qualityGate: 'passed',
+        ratings: { reliability: 'A', security: 'A', maintainability: 'A' },
+        measures: { coverage: 90 },
+        capturedAt: new Date()
+      })
+      await db.collection('sonar-snapshots').insertOne({
+        repository: 'DEFRA/repo-two',
+        projectKey: 'DEFRA_repo-two',
+        asOf,
+        qualityGate: 'warning',
+        ratings: { reliability: 'B', security: 'A', maintainability: 'A' },
+        measures: { coverage: 80 },
+        capturedAt: new Date()
+      })
+
+      const result = await client().getOverview({ asOf, db })
+
+      expect(result).toEqual([
+        {
+          repository: 'DEFRA/repo-one',
+          projectKey: 'DEFRA_repo-one',
+          url: 'https://sonarcloud.io/project/overview?id=DEFRA_repo-one',
+          qualityGate: 'passed',
+          measures: { coverage: 90, bugs: null, vulnerabilities: null },
+          asOf: '2026-02-01T00:00:00.000Z',
+          analysisDate: null
+        },
+        {
+          repository: 'DEFRA/repo-two',
+          projectKey: 'DEFRA_repo-two',
+          url: 'https://sonarcloud.io/project/overview?id=DEFRA_repo-two',
+          qualityGate: 'warning',
+          measures: { coverage: 80, bugs: null, vulnerabilities: null },
+          asOf: '2026-02-01T00:00:00.000Z',
+          analysisDate: null
+        }
+      ])
+      expect(fetchMock).not.toHaveBeenCalled()
     })
 
     test('Should skip and log repositories that fail', async () => {

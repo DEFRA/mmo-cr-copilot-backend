@@ -1,43 +1,17 @@
 services:
-  # floci is a replacement for localstack. It emulates AWS resources (sqs, sns, s3 etc) for local development
-  # See: https://floci.io for more details
-  floci:
-    image: hectorvent/floci:latest-aws
-    ports:
-      - '4566:4566'
-    env_file:
-      - 'compose/aws.env'
-    environment:
-      FLOCI_DEFAULT_REGION: eu-west-2
-    volumes:
-      - ./compose/floci/start.d:/etc/floci/init/start.d:ro
-    networks:
-      - cdp-tenant
-
-  redis:
-    image: redis:7.2.3-alpine3.18
-    ports:
-      - '6379:6379'
-    networks:
-      - cdp-tenant
-
   mongodb:
     image: mongo:7.0.28
-    networks:
-      - cdp-tenant
     ports:
       - '27017:27017'
     volumes:
       - ./compose/mongo:/docker-entrypoint-initdb.d:ro
       - mongodb-data:/data
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.hello().ok"]
+      test: ['CMD', 'mongosh', '--quiet', '--eval', 'db.hello().ok']
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 30s
-
-  ################################################################################
 
   mmo-cr-copilot-backend:
     build:
@@ -45,37 +19,51 @@ services:
       target: development
     ports:
       - '3001:3001'
-    links:
-      - 'floci:floci'
-      - 'mongodb:mongodb'
     depends_on:
-      floci:
-        condition: service_healthy
       mongodb:
-        condition: service_started
+        condition: service_healthy
+    # The image's Node crashes under --watch when the optional .env is missing;
+    # compose supplies the environment instead.
+    command: ['node', '--watch', './src']
+    # Local secrets such as Entra IDs; `environment` below still wins.
     env_file:
-      - 'compose/aws.env'
+      - path: .env
+        required: false
     environment:
       PORT: 3001
       NODE_ENV: development
+      AWS_EMF_ENVIRONMENT: Local
+      SONAR_SNAPSHOT_FALLBACK: true
       MONGO_URI: mongodb://mongodb:27017/
-      # Shared secret the dashboard frontend presents on POST /api/payloads.
+      # Must match INGEST_TOKEN on the dashboard.
       INGEST_TOKEN: local-development-ingest-token
-      # Set SONAR_PROJECT_MAP (and SONAR_TOKEN for private projects) to enable
-      # the code quality panels locally.
-      SONAR_PROJECT_MAP: ''
-    networks:
-      - cdp-tenant
     volumes:
       - ./src:/home/node/src
       - ./package.json:/home/node/package.json
+    # Source edits reload through node --watch; dependency changes rebuild under --watch.
+    develop:
+      watch:
+        - action: rebuild
+          path: ./package.json
+        - action: rebuild
+          path: ./package-lock.json
 
-################################################################################
+  # Not used by this service: it has no AWS (S3/SQS/SNS) or Redis dependency.
+  # floci:
+  #   image: hectorvent/floci:latest-aws
+  #   ports:
+  #     - '4566:4566'
+  #   env_file:
+  #     - 'compose/aws.env'
+  #   environment:
+  #     FLOCI_DEFAULT_REGION: eu-west-2
+  #   volumes:
+  #     - ./compose/floci/start.d:/etc/floci/init/start.d:ro
+  #
+  # redis:
+  #   image: redis:7.2.3-alpine3.18
+  #   ports:
+  #     - '6379:6379'
 
 volumes:
   mongodb-data:
-
-networks:
-  cdp-tenant:
-    driver: bridge
-    name: cdp-tenant

@@ -22,11 +22,11 @@ describe('#mongoDb', () => {
     })
 
     test('MongoDb should have expected database name', () => {
-      expect(server.db.databaseName).toBe('mmo-cr-copilot-backend')
+      expect(server.db.databaseName).toBe('mmo-cr-copilot-backend-test')
     })
 
     test('MongoDb should have expected namespace', () => {
-      expect(server.db.namespace).toBe('mmo-cr-copilot-backend')
+      expect(server.db.namespace).toBe('mmo-cr-copilot-backend-test')
     })
   })
 
@@ -121,6 +121,87 @@ describe('#mongoDb', () => {
           calculatedAt: new Date('2026-01-17T10:00:00.000Z')
         })
       ).rejects.toThrow(/duplicate key/i)
+    })
+  })
+
+  describe('Role mapping and project migrations', () => {
+    let db
+    let migrations
+
+    beforeAll(async () => {
+      const { createServer } = await import('#/server.js')
+      migrations = await import('./mongodb.js')
+
+      server = await createServer()
+      await server.initialize()
+      db = server.db
+    })
+
+    afterAll(async () => {
+      await db.collection('role_mappings').deleteMany({})
+      await db.collection('projects').deleteMany({})
+      await server.stop({ timeout: 1000 })
+    })
+
+    test('Should seed the bootstrap Dashboard Admin mapping on a fresh database', async () => {
+      const admin = await db
+        .collection('role_mappings')
+        .findOne({ role: 'Dashboard.Admin' })
+
+      expect(admin.groupName).toBe('AG-Users-CopilotAnalytics-Dashboard-Admin')
+    })
+
+    test('Should enforce a unique group and scope', async () => {
+      const mapping = {
+        groupName: 'AG-Unique',
+        role: 'project-user',
+        scope: 'project',
+        projectSlug: 'ALPH'
+      }
+      await db.collection('role_mappings').insertOne({ ...mapping })
+
+      await expect(
+        db.collection('role_mappings').insertOne({ ...mapping })
+      ).rejects.toThrow(/duplicate key/i)
+    })
+
+    test('Should rename groupId to groupName and drop the old index, idempotently', async () => {
+      const collection = db.collection('role_mappings')
+      await collection.drop()
+      await collection.createIndex(
+        { groupId: 1, projectSlug: 1 },
+        { unique: true }
+      )
+      await collection.insertOne({
+        groupId: 'AG-Legacy',
+        role: 'project-user',
+        scope: 'project',
+        projectSlug: 'ALPH'
+      })
+
+      await migrations.migrateRoleMappingKey(db)
+      await migrations.migrateRoleMappingKey(db)
+
+      const migrated = await collection.findOne({ groupName: 'AG-Legacy' })
+      expect(migrated).not.toHaveProperty('groupId')
+      const indexes = (await collection.indexes()).map((index) => index.name)
+      expect(indexes).not.toContain('groupId_1_projectSlug_1')
+    })
+
+    test('Should remove the retired group arrays from projects, idempotently', async () => {
+      await db.collection('projects').insertOne({
+        slug: 'ALPH',
+        name: 'Alpha',
+        adminGroupIds: ['a'],
+        entraGroupIds: ['b']
+      })
+
+      await migrations.removeProjectGroupFields(db)
+      await migrations.removeProjectGroupFields(db)
+
+      const project = await db.collection('projects').findOne({ slug: 'ALPH' })
+      expect(project).not.toHaveProperty('adminGroupIds')
+      expect(project).not.toHaveProperty('entraGroupIds')
     })
   })
 })
