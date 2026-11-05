@@ -447,6 +447,26 @@ describe('#analyticsPayloadSchema', () => {
         ).toContain('usage')
       })
 
+      test('Should accept AI credits and a shared request count, and leave credits absent when not recorded', () => {
+        const { error, value } = withAttribution(
+          extension({
+            usage: {
+              ...usage,
+              models: [
+                { model: 'gpt-5', requests: 0.5, credits: 0.0137 },
+                { model: 'legacy', requests: 2 }
+              ]
+            }
+          })
+        )
+
+        expect(error).toBeUndefined()
+        const [shared, legacy] =
+          value.commitBreakdown[0].attribution.usage.models
+        expect(shared).toMatchObject({ requests: 0.5, credits: 0.0137 })
+        expect(legacy).not.toHaveProperty('credits')
+      })
+
       test.each([
         ['a hostile model name', { models: [{ model: '<script>' }] }],
         [
@@ -464,7 +484,10 @@ describe('#analyticsPayloadSchema', () => {
         [
           'an absurd token count',
           { models: [{ model: 'm', inputTokens: 1e12 }] }
-        ]
+        ],
+        ['negative credits', { models: [{ model: 'm', credits: -0.01 }] }],
+        ['credits as text', { models: [{ model: 'm', credits: 'lots' }] }],
+        ['a negative request count', { models: [{ model: 'm', requests: -1 }] }]
       ])('Should reject %s', (_label, override) => {
         expect(
           withAttribution(extension({ usage: { ...usage, ...override } })).error

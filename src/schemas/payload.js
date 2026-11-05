@@ -108,8 +108,18 @@ const attributionLines = extensionOnly(Joi.number().integer().min(0))
 
 const tokenCount = Joi.number().integer().min(0).max(10_000_000_000).default(0)
 
-// Copilot model and token usage for the commit, read from Copilot Chat's local
-// usage log by the extension. Counts only: no prompts, responses or identities.
+// A Copilot request shared between repositories counts as a share (ADR 0009).
+const requestCount = Joi.number()
+  .min(0)
+  .max(10_000_000_000)
+  .precision(2)
+  .default(0)
+
+// GitHub AI credits as recorded by the extension; absent means not recorded.
+const aiCredits = Joi.number().min(0).max(1_000_000_000).precision(4)
+
+// Copilot model usage for the commit, read from Copilot Chat's local usage log
+// by the extension. Counts and credits only: no prompts, responses or identities.
 export const MAX_USAGE_MODELS = 20
 const usageSchema = Joi.object({
   models: Joi.array()
@@ -120,12 +130,13 @@ const usageSchema = Joi.object({
           .max(100)
           .pattern(/^[A-Za-z0-9._:/ -]+$/)
           .required(),
-        requests: tokenCount,
+        requests: requestCount,
         inputTokens: tokenCount,
         outputTokens: tokenCount,
         cacheReadTokens: tokenCount,
         cacheCreationTokens: tokenCount,
-        reasoningTokens: tokenCount
+        reasoningTokens: tokenCount,
+        credits: aiCredits.optional()
       })
     )
     .required(),

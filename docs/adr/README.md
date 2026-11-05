@@ -34,3 +34,4 @@ must be raised as a formal exception with DEFRA Delivery Architecture
 | [0006](0006-local-sonar-snapshot-fallback.md)        | Local SonarCloud snapshot fallback                           | Accepted |
 | [0007](0007-ai-survival-and-usage.md)                | AI code survival records and usage                           | Accepted |
 | [0008](0008-role-mappings-and-authorize-endpoint.md) | Entra token validation, role mappings and authorize endpoint | Accepted |
+| [0009](0009-copilot-usage-ai-credits.md)             | Copilot usage in AI credits                                  | Accepted |
