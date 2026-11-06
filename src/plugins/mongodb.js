@@ -10,7 +10,6 @@ import {
   ensureBootstrapAdmin
 } from '#/services/role-mappings.js'
 import { SURVIVAL_COLLECTION } from '#/services/survival.js'
-import { renameDefaultProjectSlug } from '#/plugins/rename-default-project-slug.js'
 
 const DEFAULT_PROJECT_SLUG = 'CRAR'
 
@@ -163,7 +162,6 @@ async function createIndexes(db, logger) {
     )
 
   await migrateDefaultProject(db, logger)
-  await renameDefaultProjectSlug(db, logger)
   await removeProjectGroupFields(db, logger)
   await ensureBootstrapAdmin(db, {
     groupName: config.get('auth.bootstrapAdminGroup'),
