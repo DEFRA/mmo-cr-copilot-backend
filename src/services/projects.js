@@ -271,18 +271,25 @@ export async function findUnassignedRepositories(db) {
   return [...unassigned].filter(Boolean).sort()
 }
 
+// A PR is in a window when any commit lands in it; backfills share one calculatedAt.
+function activityInWindow(range) {
+  return {
+    $or: [
+      { commitBreakdown: { $elemMatch: { committedAt: range } } },
+      { 'commitBreakdown.committedAt': { $exists: false }, calculatedAt: range }
+    ]
+  }
+}
+
 // Queries payloads scoped to projectSlug returning latest payload per PR.
 export async function findProjectPayloads(db, projectSlug, { from, to } = {}) {
-  const filter = { projectSlug }
-  const calculatedAt = {}
-  if (from) calculatedAt.$gte = new Date(from)
-  if (to) calculatedAt.$lt = new Date(to)
-  if (Object.keys(calculatedAt).length > 0) {
-    filter.calculatedAt = calculatedAt
-  }
+  const range = {}
+  if (from) range.$gte = new Date(from)
+  if (to) range.$lt = new Date(to)
+  const windowed = Object.keys(range).length > 0
 
   const pipeline = [
-    { $match: filter },
+    { $match: { projectSlug } },
     { $sort: { calculatedAt: -1 } },
     {
       $group: {
@@ -291,6 +298,7 @@ export async function findProjectPayloads(db, projectSlug, { from, to } = {}) {
       }
     },
     { $replaceRoot: { newRoot: '$doc' } },
+    ...(windowed ? [{ $match: activityInWindow(range) }] : []),
     { $sort: { calculatedAt: -1 } }
   ]
 

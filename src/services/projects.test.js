@@ -500,6 +500,43 @@ describe('#projects service', () => {
       expect(filtered).toHaveLength(1)
       expect(filtered[0].prNumber).toBe(1)
     })
+
+    test('Should window a backfilled PR by its commit dates, not its analysis time', async () => {
+      const commit = (committedAt) => ({
+        commit: committedAt.slice(0, 10),
+        committedAt: new Date(committedAt)
+      })
+      await db.collection(PAYLOADS_COLLECTION).insertMany([
+        {
+          repository: 'DEFRA/repo-1',
+          prNumber: 7,
+          projectSlug: 'backfill',
+          calculatedAt: new Date('2026-11-01T00:00:00.000Z'),
+          commitBreakdown: [
+            commit('2026-01-29T10:00:00.000Z'),
+            commit('2026-02-03T10:00:00.000Z')
+          ]
+        },
+        {
+          repository: 'DEFRA/repo-1',
+          prNumber: 8,
+          projectSlug: 'backfill',
+          calculatedAt: new Date('2026-11-01T00:00:00.000Z'),
+          commitBreakdown: [commit('2026-03-10T10:00:00.000Z')]
+        }
+      ])
+
+      const window = (from, to) =>
+        service.findProjectPayloads(db, 'backfill', { from, to })
+
+      const january = await window('2026-01-22T00:00:00Z', '2026-02-01T00:00Z')
+      const february = await window('2026-02-01T00:00:00Z', '2026-02-15T00:00Z')
+      const current = await window('2026-10-28T00:00:00Z', '2026-11-11T00:00Z')
+
+      expect(january.map((p) => p.prNumber)).toEqual([7])
+      expect(february.map((p) => p.prNumber)).toEqual([7])
+      expect(current).toEqual([])
+    })
   })
 
   describe('#resolveProjectSprints', () => {

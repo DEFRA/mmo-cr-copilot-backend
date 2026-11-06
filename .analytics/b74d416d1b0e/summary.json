@@ -1,0 +1,55 @@
+{
+  "schema": "ai-attribution/2",
+  "id": "b74d416d1b0e",
+  "extensionVersion": "1.0.0",
+  "totals": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 53,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "fileCount": 3,
+  "signals": {
+    "agentHooks": "installed",
+    "completionKeys": "enabled",
+    "usage": "captured"
+  },
+  "usage": {
+    "source": "copilot-otel-file",
+    "split": "per-request",
+    "sessions": [
+      {
+        "agent": "GitHub Copilot Chat",
+        "splitAcross": 2,
+        "models": [
+          {
+            "model": "claude-opus-5.5",
+            "requests": 25.5,
+            "inputTokens": 3194725,
+            "outputTokens": 20562,
+            "cacheReadTokens": 3114497,
+            "cacheCreationTokens": 80177,
+            "reasoningTokens": 7706,
+            "credits": 143.522
+          }
+        ]
+      }
+    ],
+    "totals": {
+      "requests": 25.5,
+      "inputTokens": 3194725,
+      "outputTokens": 20562,
+      "cacheReadTokens": 3114497,
+      "cacheCreationTokens": 80177,
+      "reasoningTokens": 7706,
+      "credits": 143.522
+    },
+    "window": {
+      "from": "2026-11-06T21:10:50.851Z",
+      "to": "2026-11-06T21:18:16.461Z"
+    }
+  }
+}

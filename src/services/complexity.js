@@ -325,12 +325,11 @@ export async function computeAiNativeDeliveryLeverage(
   const project = await findProject(db, projectSlug)
   if (!project) return null
 
-  const all = await db
-    .collection(PAYLOADS_COLLECTION)
-    .find({ projectSlug })
-    .sort({ calculatedAt: 1 })
-    .toArray()
-  const time = (p) => new Date(p.calculatedAt).getTime()
+  // Last commit, not analysis time: a backfill analyses months of PRs at once.
+  const time = (p) => new Date(p.lastCommitAt ?? p.calculatedAt).getTime()
+  const all = (
+    await db.collection(PAYLOADS_COLLECTION).find({ projectSlug }).toArray()
+  ).sort((a, b) => time(a) - time(b))
   const inWindow = all.filter(
     (p) =>
       (!from || time(p) >= new Date(from).getTime()) &&

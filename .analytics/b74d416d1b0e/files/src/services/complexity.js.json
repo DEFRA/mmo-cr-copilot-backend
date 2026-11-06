@@ -1,0 +1,24 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/services/complexity.js",
+  "added": 5,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 5,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "328-332"
+  },
+  "ai": [
+    [328, "a", "a51b02cc", 0],
+    [329, "a", "898b0d42", 0],
+    [330, "a", "4ce4cd9f", 0],
+    [331, "a", "f5d10f69", 0],
+    [332, "a", "a3267b7d", 0]
+  ]
+}
