@@ -7,10 +7,10 @@ import { createProxyDispatcher } from '#/common/helpers/proxy.js'
  *
  * The browser must never hold the Sonar token, so every SonarCloud Web API call
  * is made here and exposed to the dashboard through the `/api/sonar/*` routes.
- * The client degrades gracefully by design: with no project map it reports
- * itself "not configured"; a repository absent from the map is "not linked";
- * and a 404 from SonarCloud is treated as "not analysed" rather than an error.
- * In every one of those cases the dashboard simply hides the affected panel.
+ * Project keys come from the `repositories` collection (set on the dashboard).
+ * The client degrades gracefully by design: a repository with no key is "not
+ * linked", and a 404 from SonarCloud is treated as "not analysed" rather than
+ * an error. In both cases the dashboard simply hides the affected panel.
  */
 
 // Overall (whole-branch) metrics shown on a repository's main branch.
@@ -64,32 +64,28 @@ function isPlaceholder(value) {
   return value.includes('<') && value.includes('>')
 }
 
-function parseProjectMap(raw, logger) {
-  if (!raw.trim()) {
-    return {}
-  }
-
-  let parsed
-  try {
-    parsed = JSON.parse(raw)
-  } catch (error) {
-    logger.warn(
-      { err: error },
-      'SONAR_PROJECT_MAP is not valid JSON — ignoring'
+/** Repositories that have a SonarCloud project key, sorted by name. */
+export function linkedRepositories(db) {
+  return db
+    .collection('repositories')
+    .find(
+      { sonarProjectKey: { $nin: [null, ''] } },
+      { projection: { _id: 0, fullName: 1, sonarProjectKey: 1 } }
     )
-    return {}
-  }
+    .sort({ fullName: 1 })
+    .toArray()
+}
 
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    logger.warn('SONAR_PROJECT_MAP is not a JSON object — ignoring')
-    return {}
-  }
-
-  return Object.fromEntries(
-    Object.entries(parsed)
-      .filter(([, key]) => typeof key === 'string' && key.trim())
-      .map(([repository, key]) => [repository, key.trim()])
-  )
+/** The SonarCloud project key mapped to a repository, or null. */
+export async function repositoryProjectKey(db, repository) {
+  // `repository` is caller-supplied; String() stops a query operator object.
+  const repo = await db
+    .collection('repositories')
+    .findOne(
+      { fullName: String(repository) },
+      { projection: { sonarProjectKey: 1 } }
+    )
+  return repo?.sonarProjectKey || null
 }
 
 function toNumber(value) {
@@ -168,7 +164,6 @@ export function createSonarClient(options = {}) {
   const {
     baseUrl = config.get('sonar.baseUrl'),
     token = config.get('sonar.token'),
-    projectMap: rawProjectMap = config.get('sonar.projectMap'),
     requestTimeoutMs = config.get('sonar.requestTimeoutMs'),
     cacheTtlMs = config.get('sonar.cacheTtlMs'),
     dispatcher = createProxyDispatcher(),
@@ -176,24 +171,9 @@ export function createSonarClient(options = {}) {
   } = options
 
   const apiBase = baseUrl.replace(/\/+$/, '')
-  const projectMap = parseProjectMap(rawProjectMap, logger)
+  // A token is only needed for private projects; public ones are read anonymously.
   const hasToken = Boolean(token) && !isPlaceholder(token)
   const cache = new Map()
-
-  /**
-   * The integration is "configured" as soon as a project map is present. A
-   * token is only needed for private SonarCloud projects — public ones are
-   * readable anonymously — so it is optional and simply added when available.
-   */
-  function isConfigured() {
-    return Object.keys(projectMap).length > 0
-  }
-
-  function projectKeyFor(repository) {
-    // `repository` is caller-supplied, so an inherited member such as
-    // 'constructor' must not resolve to a truthy "project key".
-    return Object.hasOwn(projectMap, repository) ? projectMap[repository] : null
-  }
 
   function requestInit(headers) {
     return {
@@ -269,15 +249,15 @@ export function createSonarClient(options = {}) {
 
   /** Main-branch quality for one repository. */
   async function getRepoMetrics(repository, { asOf, db } = {}) {
-    if (!isConfigured()) {
-      return { configured: false }
-    }
-
-    const projectKey = projectKeyFor(repository)
+    const projectKey = await repositoryProjectKey(db, repository)
     if (!projectKey) {
       return { configured: true, linked: false, repository }
     }
 
+    return metricsForProject(repository, projectKey, { asOf, db })
+  }
+
+  async function metricsForProject(repository, projectKey, { asOf, db }) {
     const asOfDate = asOf ? new Date(asOf) : null
     const historical = Boolean(asOfDate) && asOfDate.getTime() < Date.now()
     const url = `${apiBase}/project/overview?id=${encodeURIComponent(projectKey)}`
@@ -400,11 +380,7 @@ export function createSonarClient(options = {}) {
 
   /** New-code quality for one pull request. */
   async function getPrMetrics(repository, prNumber, { db } = {}) {
-    if (!isConfigured()) {
-      return { configured: false }
-    }
-
-    const projectKey = projectKeyFor(repository)
+    const projectKey = await repositoryProjectKey(db, repository)
     if (!projectKey) {
       return { configured: true, linked: false, repository }
     }
@@ -504,17 +480,15 @@ export function createSonarClient(options = {}) {
    * repository — powers the portfolio repository cards.
    */
   async function getOverview({ asOf, db } = {}) {
-    if (!isConfigured()) {
-      return { configured: false }
-    }
-
-    const repositories = Object.keys(projectMap)
+    const linked = await linkedRepositories(db)
     const results = await Promise.allSettled(
-      repositories.map((repository) => getRepoMetrics(repository, { asOf, db }))
+      linked.map(({ fullName, sonarProjectKey }) =>
+        metricsForProject(fullName, sonarProjectKey, { asOf, db })
+      )
     )
 
     return results.flatMap((result, index) => {
-      const repository = repositories[index]
+      const repository = linked[index].fullName
       const metrics = result.status === 'fulfilled' ? result.value : null
 
       if (metrics && 'projectKey' in metrics && 'ratings' in metrics) {
@@ -542,8 +516,6 @@ export function createSonarClient(options = {}) {
   }
 
   return {
-    isConfigured,
-    projectKeyFor,
     validateToken,
     getRepoMetrics,
     getPrMetrics,

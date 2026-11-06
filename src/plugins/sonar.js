@@ -8,8 +8,7 @@ export const sonar = {
     version: '1.0.0',
     register: (server, _options) => {
       const live = createSonarClient({ logger: server.logger })
-      const useSnapshots =
-        !live.isConfigured() && config.get('sonar.snapshotFallback')
+      const useSnapshots = config.get('sonar.snapshotFallback')
       const client = useSnapshots ? createSonarSnapshotReader() : live
 
       server.decorate('server', 'sonar', client)
@@ -19,15 +18,11 @@ export const sonar = {
         server.logger.info(
           'SonarCloud snapshot fallback is on (local development only)'
         )
-      } else if (live.isConfigured()) {
+      } else {
         server.events.on('start', () => {
           // Diagnostic only — a bad token never blocks startup.
           live.validateToken()
         })
-      } else {
-        server.logger.info(
-          'SONAR_PROJECT_MAP is not set — SonarCloud panels will be hidden'
-        )
       }
     }
   }

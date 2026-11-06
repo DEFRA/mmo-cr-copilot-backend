@@ -1,9 +1,10 @@
 import { createSonarClient, PR_METRIC_KEYS } from './sonar.js'
 
-const PROJECT_MAP = JSON.stringify({
-  'DEFRA/repo-one': 'DEFRA_repo-one',
-  'DEFRA/repo-two': 'DEFRA_repo-two'
-})
+const REPOSITORIES = [
+  { fullName: 'DEFRA/repo-one', sonarProjectKey: 'DEFRA_repo-one' },
+  { fullName: 'DEFRA/repo-two', sonarProjectKey: 'DEFRA_repo-two' },
+  { fullName: 'DEFRA/no-key', sonarProjectKey: null }
+]
 
 const measuresResponse = (measures) =>
   JSON.stringify({ component: { key: 'DEFRA_repo-one', measures } })
@@ -19,14 +20,23 @@ function createLoggerStub() {
   }
 }
 
-function createMockDb() {
+function createMockDb(repositories = REPOSITORIES) {
   const collections = new Map()
-  return {
+  const db = {
     collection: (name) => {
       if (!collections.has(name)) {
-        const docs = []
+        const docs =
+          name === 'repositories' ? repositories.map((r) => ({ ...r })) : []
         collections.set(name, {
           docs,
+          find: vi.fn(() => ({
+            sort: () => ({
+              toArray: async () =>
+                docs
+                  .filter((d) => d.sonarProjectKey)
+                  .sort((a, b) => a.fullName.localeCompare(b.fullName))
+            })
+          })),
           findOne: vi.fn(async (query) => {
             return (
               docs.find((d) =>
@@ -61,6 +71,7 @@ function createMockDb() {
       return collections.get(name)
     }
   }
+  return db
 }
 
 /** Routes mocked responses by URL so parallel calls resolve independently. */
@@ -74,17 +85,28 @@ function mockSonar(routes) {
   })
 }
 
-const client = (options = {}) =>
-  createSonarClient({
+// Wraps the client so each call reads the mapped repositories from a mock db.
+const client = ({ db: defaultDb = createMockDb(), ...options } = {}) => {
+  const sonar = createSonarClient({
     baseUrl: 'https://sonarcloud.io',
     token: '',
-    projectMap: PROJECT_MAP,
     requestTimeoutMs: 1000,
     cacheTtlMs: 60000,
     dispatcher: undefined,
     logger: createLoggerStub(),
     ...options
   })
+  const withDb = (opts = {}) => ({ db: defaultDb, ...opts })
+
+  return {
+    ...sonar,
+    getRepoMetrics: (repository, opts) =>
+      sonar.getRepoMetrics(repository, withDb(opts)),
+    getPrMetrics: (repository, prNumber, opts) =>
+      sonar.getPrMetrics(repository, prNumber, withDb(opts)),
+    getOverview: (opts) => sonar.getOverview(withDb(opts))
+  }
+}
 
 describe('#createSonarClient', () => {
   describe('Configuration', () => {
@@ -95,63 +117,24 @@ describe('#createSonarClient', () => {
       expect(PR_METRIC_KEYS).toContain('new_software_quality_high_issues')
     })
 
-    test('Should report not configured without a project map', () => {
-      expect(client({ projectMap: '' }).isConfigured()).toBe(false)
-    })
-
-    test('Should ignore a project map that is not valid JSON', () => {
-      const logger = createLoggerStub()
-
-      expect(client({ projectMap: '{nope', logger }).isConfigured()).toBe(false)
-      expect(logger.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ err: expect.any(Error) }),
-        expect.stringContaining('not valid JSON')
-      )
-    })
-
-    test('Should ignore a project map that is not a JSON object', () => {
-      const logger = createLoggerStub()
-
-      expect(client({ projectMap: '["a"]', logger }).isConfigured()).toBe(false)
-      expect(logger.warn).toHaveBeenCalledWith(
-        expect.stringContaining('not a JSON object')
-      )
-    })
-
-    test('Should drop entries whose project key is not a non-empty string', () => {
-      const sonar = client({
-        projectMap: JSON.stringify({
-          'DEFRA/a': '',
-          'DEFRA/b': 7,
-          'DEFRA/c': 'k'
-        })
+    test('Should report a repository without a project key as not linked', async () => {
+      await expect(client().getRepoMetrics('DEFRA/no-key')).resolves.toEqual({
+        configured: true,
+        linked: false,
+        repository: 'DEFRA/no-key'
       })
-
-      expect(sonar.projectKeyFor('DEFRA/a')).toBeNull()
-      expect(sonar.projectKeyFor('DEFRA/b')).toBeNull()
-      expect(sonar.projectKeyFor('DEFRA/c')).toBe('k')
     })
 
-    test('Should not resolve inherited object members as a project key', () => {
-      const sonar = client({
-        projectMap: JSON.stringify({ 'DEFRA/c': 'k' })
-      })
-
-      expect(sonar.projectKeyFor('constructor')).toBeNull()
-      expect(sonar.projectKeyFor('toString')).toBeNull()
-      expect(sonar.projectKeyFor('__proto__')).toBeNull()
+    test('Should not treat a query operator as a repository name', async () => {
+      await expect(
+        client().getRepoMetrics({ $ne: 'x' })
+      ).resolves.toMatchObject({ linked: false })
     })
 
-    test('Should report every endpoint as not configured without a map', async () => {
-      const sonar = client({ projectMap: '' })
-
-      await expect(sonar.getRepoMetrics('DEFRA/repo-one')).resolves.toEqual({
-        configured: false
-      })
-      await expect(sonar.getPrMetrics('DEFRA/repo-one', 1)).resolves.toEqual({
-        configured: false
-      })
-      await expect(sonar.getOverview()).resolves.toEqual({ configured: false })
+    test('Should report no repositories when none are linked', async () => {
+      await expect(
+        client({ db: createMockDb([]) }).getOverview()
+      ).resolves.toEqual([])
     })
   })
 

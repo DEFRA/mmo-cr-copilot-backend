@@ -6,7 +6,10 @@ import {
   asUser
 } from '#/test-helpers/auth-headers.js'
 
-const PROJECT_MAP = JSON.stringify({ 'DEFRA/repo-one': 'DEFRA_repo-one' })
+const REPO_ONE = {
+  fullName: 'DEFRA/repo-one',
+  sonarProjectKey: 'DEFRA_repo-one'
+}
 
 const measuresResponse = JSON.stringify({
   component: {
@@ -28,7 +31,6 @@ describe('#sonar routes', () => {
   const get = (url) => server.inject({ url, headers: admin })
 
   beforeAll(async () => {
-    process.env.SONAR_PROJECT_MAP = PROJECT_MAP
     // Disable the response cache so each test exercises its own mocked upstream.
     process.env.SONAR_CACHE_TTL_MS = '0'
 
@@ -42,13 +44,14 @@ describe('#sonar routes', () => {
 
   afterAll(async () => {
     await server.stop({ timeout: 1000 })
-    delete process.env.SONAR_PROJECT_MAP
     delete process.env.SONAR_CACHE_TTL_MS
   })
 
   beforeEach(async () => {
     await server.db.collection('sonar-snapshots')?.deleteMany({})
     await server.db.collection('sonar-pr-snapshots')?.deleteMany({})
+    await server.db.collection('repositories').deleteMany({})
+    await server.db.collection('repositories').insertOne({ ...REPO_ONE })
   })
 
   describe('GET /api/sonar/overview', () => {
@@ -259,7 +262,7 @@ describe('#sonar routes', () => {
       await grantAccess(server.db, 'ALPH')
       await server.db
         .collection('repositories')
-        .insertOne({ fullName: 'DEFRA/repo-one', projectSlug: 'ALPH' })
+        .insertOne({ ...REPO_ONE, projectSlug: 'ALPH' })
     })
 
     const inject = (url, headers) => server.inject({ url, headers })

@@ -14,8 +14,7 @@ collections.
 ## Decision
 
 Add a convict flag `sonar.snapshotFallback` (env `SONAR_SNAPSHOT_FALLBACK`, default `false`). When
-it is on and the live SonarCloud client is not configured (`SONAR_PROJECT_MAP` is empty), the
-`sonar` plugin serves the stored
+it is on, the `sonar` plugin serves the stored
 snapshots through `createSonarSnapshotReader` with the same shape as the live client:
 
 - the overview, repository and PR reads return the newest snapshot with `asOf` at or before the

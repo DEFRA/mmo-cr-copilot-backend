@@ -10,7 +10,6 @@ describe('#sonar snapshot fallback', () => {
 
   beforeAll(async () => {
     process.env.SONAR_SNAPSHOT_FALLBACK = 'true'
-    delete process.env.SONAR_PROJECT_MAP
     // Dynamic import: config must be read after the env and MONGO_URI are set
     const { createServer } = await import('#/server.js')
     server = await createServer()

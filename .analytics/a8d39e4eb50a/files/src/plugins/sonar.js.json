@@ -1,0 +1,21 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/plugins/sonar.js",
+  "added": 2,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 2,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "11,21"
+  },
+  "ai": [
+    [11, "a", "7791da6b", 0],
+    [21, "a", "44501afe", 0]
+  ]
+}

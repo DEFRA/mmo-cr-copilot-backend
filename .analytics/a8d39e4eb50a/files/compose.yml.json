@@ -1,0 +1,20 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "compose.yml",
+  "added": 1,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 1,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "38"
+  },
+  "ai": [
+    [38, "a", "db00e2f5", 0]
+  ]
+}

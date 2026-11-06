@@ -1,5 +1,9 @@
 import { config } from '#/config.js'
-import { overviewMeasures } from '#/services/sonar.js'
+import {
+  linkedRepositories,
+  overviewMeasures,
+  repositoryProjectKey
+} from '#/services/sonar.js'
 
 const NO_RATINGS = { reliability: null, security: null, maintainability: null }
 
@@ -13,26 +17,6 @@ export function createSonarSnapshotReader({
   const apiBase = baseUrl.replace(/\/+$/, '')
   const overviewUrl = (key) =>
     `${apiBase}/project/overview?id=${encodeURIComponent(key)}`
-
-  const linkedRepositories = (db) =>
-    db
-      .collection('repositories')
-      .find(
-        { sonarProjectKey: { $nin: [null, ''] } },
-        { projection: { _id: 0, fullName: 1, sonarProjectKey: 1 } }
-      )
-      .sort({ fullName: 1 })
-      .toArray()
-
-  async function projectKeyFor(db, repository) {
-    const repo = await db
-      .collection('repositories')
-      .findOne(
-        { fullName: String(repository) },
-        { projection: { sonarProjectKey: 1 } }
-      )
-    return repo?.sonarProjectKey || null
-  }
 
   async function repoMetrics(db, repository, projectKey, asOf) {
     const asOfDate = asOf ? new Date(asOf) : null
@@ -72,11 +56,10 @@ export function createSonarSnapshotReader({
   }
 
   return {
-    isConfigured: () => true,
     validateToken: async () => {},
 
     async getRepoMetrics(repository, { asOf, db } = {}) {
-      const projectKey = await projectKeyFor(db, repository)
+      const projectKey = await repositoryProjectKey(db, repository)
       if (!projectKey) return { configured: true, linked: false, repository }
       return repoMetrics(db, repository, projectKey, asOf)
     },
@@ -97,7 +80,7 @@ export function createSonarSnapshotReader({
     },
 
     async getPrMetrics(repository, prNumber, { db } = {}) {
-      const projectKey = await projectKeyFor(db, repository)
+      const projectKey = await repositoryProjectKey(db, repository)
       if (!projectKey) return { configured: true, linked: false, repository }
       const prNum = Number(prNumber)
       const url = `${apiBase}/summary/new_code?id=${encodeURIComponent(projectKey)}&pullRequest=${encodeURIComponent(String(prNum))}`

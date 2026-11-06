@@ -35,7 +35,7 @@ services:
       AWS_EMF_ENVIRONMENT: Local
       SONAR_SNAPSHOT_FALLBACK: true
       MONGO_URI: mongodb://mongodb:27017/
-      # Must match INGEST_TOKEN on the dashboard.
+      # Must match INGEST_TOKEN on the dashboard (dashboard to backend only).
       INGEST_TOKEN: local-development-ingest-token
     volumes:
       - ./src:/home/node/src

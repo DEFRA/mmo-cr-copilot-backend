@@ -213,7 +213,7 @@ export const config = convict({
   },
   ingest: {
     token: {
-      doc: 'Shared secret the dashboard frontend presents on POST /api/payloads. Required outside local development.',
+      doc: 'Service-to-service secret the dashboard presents on POST /api/payloads. Must match INGEST_TOKEN on the dashboard. Required outside local development.',
       format: String,
       default: '',
       sensitive: true,
@@ -240,12 +240,6 @@ export const config = convict({
       sensitive: true,
       env: 'SONAR_TOKEN'
     },
-    projectMap: {
-      doc: 'JSON map of "<git repository>": "<SonarCloud project key>". Repositories absent from the map are reported as not linked.',
-      format: String,
-      default: '',
-      env: 'SONAR_PROJECT_MAP'
-    },
     requestTimeoutMs: {
       doc: 'Timeout applied to each SonarCloud API request',
       format: Number,
@@ -259,7 +253,7 @@ export const config = convict({
       env: 'SONAR_CACHE_TTL_MS'
     },
     snapshotFallback: {
-      doc: 'Local development only: when SONAR_PROJECT_MAP is empty, serve /api/sonar/* from stored snapshots (ADR 0006)',
+      doc: 'Local development only: serve /api/sonar/* from stored snapshots instead of SonarCloud (ADR 0006)',
       format: Boolean,
       default: false,
       env: 'SONAR_SNAPSHOT_FALLBACK'
@@ -276,7 +270,8 @@ export const config = convict({
       doc: 'Jira service account email address',
       format: String,
       default: '',
-      env: 'JIRA_EMAIL'
+      env: 'JIRA_EMAIL',
+      sensitive: true
     },
     apiToken: {
       doc: 'Jira API token for basic authentication',

@@ -28,7 +28,7 @@ volume, so returning every payload to the browser will not scale.
   admin groups), `entraGroupIds[]` (project user groups), timestamps and `archivedAt`.
 - Adopted a `repositories` collection: `fullName` (unique index — enforces the one-repo-per-project
   rule), `projectSlug` (indexed), `sonarProjectKey`, `mappedAt`, `mappedBy`. It replaces
-  `SONAR_PROJECT_MAP`, which is retained as a seed.
+  `SONAR_PROJECT_MAP`, which has since been removed — the dashboard now sets the key.
 - Payloads gain a denormalised `projectSlug`, stamped at ingest, with a compound index on
   `{ projectSlug: 1, calculatedAt: -1 }`.
 - Payloads from a repository not yet mapped to a project are stored with `projectSlug: null`
@@ -37,7 +37,7 @@ volume, so returning every payload to the browser will not scale.
 - Reads are **project-scoped and time-windowed**, for example
   `/api/projects/{slug}/payloads?from=&to=` and `/api/projects/{slug}/sprints`.
 - Existing data is migrated idempotently: creates the default project (`mmo-catch-recording`),
-  seeds repository mappings from `sonar.projectMap` and existing payloads, and back-stamps
+  seeds repository mappings from existing payloads, and back-stamps
   existing payloads with `projectSlug: 'mmo-catch-recording'`.
 
 ## Three-tier role resolution and access model
