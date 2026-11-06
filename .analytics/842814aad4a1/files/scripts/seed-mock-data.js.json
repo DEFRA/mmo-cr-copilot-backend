@@ -1,0 +1,22 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "scripts/seed-mock-data.js",
+  "added": 4,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 2,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 2
+  },
+  "ranges": {
+    "ai-agent": "1094,1598",
+    "untracked": "1547,1596"
+  },
+  "ai": [
+    [1094, "a", "b679b57d", 0],
+    [1598, "a", "daa6cf9f", 0]
+  ]
+}

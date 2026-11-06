@@ -124,6 +124,105 @@ describe('#mongoDb', () => {
     })
   })
 
+  describe('Repository SonarCloud key index', () => {
+    let db
+    let migrations
+    const repositories = () => db.collection('repositories')
+    // Seeding duplicates needs the index gone; it may already be missing.
+    const dropSonarIndex = () =>
+      repositories()
+        .dropIndex('sonarProjectKey_unique')
+        .catch(() => {})
+
+    beforeAll(async () => {
+      const { createServer } = await import('#/server.js')
+      migrations = await import('./mongodb.js')
+
+      server = await createServer()
+      await server.initialize()
+      db = server.db
+    })
+
+    beforeEach(async () => {
+      await repositories().deleteMany({})
+    })
+
+    afterAll(async () => {
+      await repositories().deleteMany({})
+      await migrations.createSonarKeyIndex(db)
+      await server.stop({ timeout: 1000 })
+    })
+
+    test('Should reject a second repository with the same key', async () => {
+      await repositories().insertOne({
+        fullName: 'DEFRA/a',
+        sonarProjectKey: 'K'
+      })
+
+      await expect(
+        repositories().insertOne({ fullName: 'DEFRA/b', sonarProjectKey: 'K' })
+      ).rejects.toThrow(/duplicate key/i)
+    })
+
+    test('Should allow any number of repositories with no key', async () => {
+      await repositories().insertMany([
+        { fullName: 'DEFRA/a' },
+        { fullName: 'DEFRA/b', sonarProjectKey: null },
+        { fullName: 'DEFRA/c', sonarProjectKey: null },
+        { fullName: 'DEFRA/d', sonarProjectKey: '' },
+        { fullName: 'DEFRA/e', sonarProjectKey: '' }
+      ])
+
+      await expect(repositories().countDocuments()).resolves.toBe(5)
+    })
+
+    test('Should warn and carry on when existing keys are duplicated', async () => {
+      await dropSonarIndex()
+      await repositories().insertMany([
+        { fullName: 'DEFRA/a', sonarProjectKey: 'SECRET_DUP' },
+        { fullName: 'DEFRA/b', sonarProjectKey: 'SECRET_DUP' }
+      ])
+      const logger = { warn: vi.fn() }
+
+      await expect(
+        migrations.createSonarKeyIndex(db, logger)
+      ).resolves.toBeUndefined()
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        { error: { code: 11000 } },
+        'Could not create unique index on repository SonarCloud keys; resolve duplicate keys'
+      )
+      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('SECRET_DUP')
+      const names = (await repositories().indexes()).map((index) => index.name)
+      expect(names).not.toContain('sonarProjectKey_unique')
+    })
+
+    test('Should still start the server when existing keys are duplicated', async () => {
+      await dropSonarIndex()
+      await repositories().insertMany([
+        { fullName: 'DEFRA/a', sonarProjectKey: 'DUP' },
+        { fullName: 'DEFRA/b', sonarProjectKey: 'DUP' }
+      ])
+      const { createServer } = await import('#/server.js')
+      const second = await createServer()
+
+      await expect(second.initialize()).resolves.toBeUndefined()
+      await second.stop({ timeout: 1000 })
+    })
+
+    test('Should rethrow any other index failure', async () => {
+      const failing = {
+        collection: () => ({
+          createIndex: () => Promise.reject(new Error('not primary'))
+        })
+      }
+
+      await expect(migrations.createSonarKeyIndex(failing)).rejects.toThrow(
+        'not primary'
+      )
+    })
+  })
+
   describe('Role mapping and project migrations', () => {
     let db
     let migrations

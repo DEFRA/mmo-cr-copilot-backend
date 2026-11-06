@@ -1,6 +1,8 @@
 import { config } from '#/config.js'
 import { createLogger } from '#/common/helpers/logging/logger.js'
 import { createProxyDispatcher } from '#/common/helpers/proxy.js'
+import { JIRA_PROJECT_KEY_PATTERN } from '#/schemas/project.js'
+import { attachIssueFlow } from '#/services/workflow-stages.js'
 
 export {
   PR_JIRA_LINKS_COLLECTION,
@@ -8,8 +10,8 @@ export {
 } from './pr-jira-links.js'
 export const JIRA_ISSUES_COLLECTION = 'jira-issues'
 
-const JIRA_PROJECT_KEY = /^[A-Z][A-Z0-9_]+$/
 const JIRA_ISSUE_KEY = /^[A-Z][A-Z0-9_]+-\d+$/
+const STATUS_CATEGORIES = new Set(['new', 'indeterminate', 'done'])
 
 // JQL date literals take "yyyy/MM/dd HH:mm" (UTC here).
 function jqlDateTime(date) {
@@ -31,9 +33,18 @@ function toJiraIssue(doc) {
     ...rest,
     ...(rest.created ? { created: toIso(rest.created) } : {}),
     ...(rest.resolved ? { resolved: toIso(rest.resolved) } : {}),
-    ...(rest.started ? { started: toIso(rest.started) } : {}),
     ...(rest.updated ? { updated: toIso(rest.updated) } : {}),
-    ...(rest.syncedAt ? { syncedAt: toIso(rest.syncedAt) } : {})
+    ...(rest.syncedAt ? { syncedAt: toIso(rest.syncedAt) } : {}),
+    ...(rest.flow
+      ? {
+          flow: {
+            ...rest.flow,
+            startedAt: toIso(rest.flow.startedAt),
+            doneAt: toIso(rest.flow.doneAt),
+            firstDoneAt: toIso(rest.flow.firstDoneAt)
+          }
+        }
+      : {})
   }
 }
 
@@ -99,22 +110,7 @@ function issueLinks(links = []) {
 function normalizeIssue(issue, projectSlug, storyPointsField) {
   if (issue.fields) {
     const f = issue.fields
-    let started = null
     const histories = issue.changelog?.histories || []
-    for (const h of histories) {
-      const isStatusChange = h.items?.some(
-        (it) =>
-          it.field === 'status' &&
-          (it.toString?.toLowerCase().includes('progress') ||
-            it.fromString?.toLowerCase().includes('to do') ||
-            it.fromString?.toLowerCase().includes('backlog'))
-      )
-      if (isStatusChange && h.created) {
-        started = toDate(h.created)
-        break
-      }
-    }
-    const created = toDate(f.created)
     const spRaw = f[storyPointsField] ?? f.customfield_10016 ?? f.storyPoints
     const sp = typeof spRaw === 'number' ? spRaw : Number(spRaw) || null
 
@@ -132,9 +128,8 @@ function normalizeIssue(issue, projectSlug, storyPointsField) {
           ''
         ).toLowerCase()
       },
-      created,
+      created: toDate(f.created),
       resolved: toDate(f.resolutiondate || f.resolved),
-      started: started || created,
       storyPoints: sp,
       updated: toDate(f.updated) || new Date(),
       reopenCount: countReopens(histories),
@@ -145,13 +140,11 @@ function normalizeIssue(issue, projectSlug, storyPointsField) {
     }
   }
 
-  const created = toDate(issue.created)
   return {
     ...issue,
     projectSlug: issue.projectSlug || projectSlug,
-    created,
+    created: toDate(issue.created),
     resolved: toDate(issue.resolved),
-    started: toDate(issue.started) || created,
     status: {
       name: issue.status?.name ?? '',
       categoryKey: (issue.status?.categoryKey ?? '').toLowerCase()
@@ -160,15 +153,16 @@ function normalizeIssue(issue, projectSlug, storyPointsField) {
   }
 }
 
-// Queries and returns Jira issues for a project, newest resolved first.
-export async function listProjectJiraIssues(db, projectSlug) {
+// A project's Jira issues, newest resolved first, each with its flow under the project's workflow.
+export async function listProjectJiraIssues(db, projectSlug, project = null) {
   const docs = await db
     .collection(JIRA_ISSUES_COLLECTION)
     .find({ projectSlug })
     .sort({ resolved: -1, updated: -1 })
     .toArray()
 
-  return docs.map(toJiraIssue)
+  const { issues } = attachIssueFlow(docs, project)
+  return issues.map(toJiraIssue)
 }
 
 // Creates a Jira Cloud client instance for issue search and project sync.
@@ -265,6 +259,61 @@ export function createJiraClient(options = {}) {
     }
   }
 
+  async function fetchFullChangelog(issueKey) {
+    const histories = []
+    for (let startAt = 0; ;) {
+      const page = await jiraRequest(
+        `/rest/api/3/issue/${encodeURIComponent(issueKey)}/changelog?startAt=${startAt}&maxResults=100`
+      )
+      const values = Array.isArray(page?.values) ? page.values : []
+      histories.push(...values)
+      if (page?.isLast !== false || values.length === 0) break
+      startAt += values.length
+    }
+    return histories
+  }
+
+  async function withFullChangelog(issue) {
+    const { total, histories } = issue.changelog ?? {}
+    if (
+      !JIRA_ISSUE_KEY.test(issue.key ?? '') ||
+      !Number.isInteger(total) ||
+      !Array.isArray(histories) ||
+      total <= histories.length
+    ) {
+      return issue
+    }
+    // Search caps the embedded changelog; the changelog endpoint pages through all of it.
+    return {
+      ...issue,
+      changelog: {
+        ...issue.changelog,
+        histories: await fetchFullChangelog(issue.key)
+      }
+    }
+  }
+
+  /** Statuses of a Jira project across its issue types, with their categories. */
+  async function getProjectStatuses(projectKey) {
+    if (!isConfigured() || !JIRA_PROJECT_KEY_PATTERN.test(projectKey ?? '')) {
+      return []
+    }
+    const types = await jiraRequest(
+      `/rest/api/3/project/${encodeURIComponent(projectKey)}/statuses`
+    )
+    return (Array.isArray(types) ? types : [])
+      .flatMap((type) =>
+        (type?.statuses ?? []).map((status) => ({
+          name: status?.name ?? '',
+          categoryKey: STATUS_CATEGORIES.has(status?.statusCategory?.key)
+            ? status.statusCategory.key
+            : null,
+          issueType: type?.name ?? ''
+        }))
+      )
+      .filter((status) => status.name)
+  }
+
   async function storeMatchingIssues(db, projectSlug, jql, storyPointsField) {
     let pageToken
     let totalSynced = 0
@@ -290,7 +339,11 @@ export function createJiraClient(options = {}) {
 
       const issues = result.issues || []
       for (const issue of issues) {
-        const doc = normalizeIssue(issue, projectSlug, storyPointsField)
+        const doc = normalizeIssue(
+          await withFullChangelog(issue),
+          projectSlug,
+          storyPointsField
+        )
         await db
           .collection(JIRA_ISSUES_COLLECTION)
           .updateOne({ key: doc.key }, { $set: doc }, { upsert: true })
@@ -326,7 +379,9 @@ export function createJiraClient(options = {}) {
     }
 
     // Keys are interpolated into JQL, so anything but a plain project key is dropped.
-    const keys = (projectKeys ?? []).filter((k) => JIRA_PROJECT_KEY.test(k))
+    const keys = (projectKeys ?? []).filter((k) =>
+      JIRA_PROJECT_KEY_PATTERN.test(k)
+    )
     if (keys.length === 0) {
       return {
         synced: 0,
@@ -387,6 +442,8 @@ export function createJiraClient(options = {}) {
     syncProjectIssues,
     syncIssuesByKey,
     getBoardSprints,
-    listProjectJiraIssues: (db, slug) => listProjectJiraIssues(db, slug)
+    getProjectStatuses,
+    listProjectJiraIssues: (db, slug, project) =>
+      listProjectJiraIssues(db, slug, project)
   }
 }

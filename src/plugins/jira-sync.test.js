@@ -11,8 +11,8 @@ describe('#jira-sync', () => {
 
   beforeAll(async () => {
     // Dynamic imports: config must be read after vitest-mongodb sets MONGO_URI
-    ;({ runJiraSync, fetchUnknownJiraIssues, captureSprintScope } =
-      await import('./jira-sync.js'))
+    ;({ runJiraSync, fetchUnknownJiraIssues } = await import('./jira-sync.js'))
+    ;({ captureSprintScope } = await import('#/services/jira-project-sync.js'))
     const { createServer } = await import('#/server.js')
     server = await createServer()
     await server.initialize()
@@ -112,6 +112,80 @@ describe('#jira-sync', () => {
         .findOne({ slug: 'bad' })
       expect(project.jira.lastSyncedAt).toBeUndefined()
       expect(logger.error).toHaveBeenCalled()
+    })
+
+    describe('Status detection', () => {
+      const previous = [{ name: 'Old', categoryKey: 'new' }]
+
+      beforeEach(async () => {
+        await db.collection(PROJECTS_COLLECTION).insertOne({
+          slug: 'live',
+          archivedAt: null,
+          jira: { projectKeys: ['MMO'], detectedStatuses: previous }
+        })
+      })
+
+      const stored = () =>
+        db.collection(PROJECTS_COLLECTION).findOne({ slug: 'live' })
+
+      test('Should store the Jira statuses detected for the project key', async () => {
+        const client = {
+          syncProjectIssues: vi.fn(async () => ({ synced: 1 })),
+          getProjectStatuses: vi.fn(async () => [
+            { name: 'To Do', categoryKey: 'new', issueType: 'Story' },
+            { name: 'Shipped', categoryKey: 'done', issueType: 'Story' }
+          ])
+        }
+
+        await runJiraSync({ db, locker: server.locker, client, logger })
+
+        const { jira } = await stored()
+        expect(client.getProjectStatuses).toHaveBeenCalledWith('MMO')
+        expect(jira.detectedStatuses).toEqual([
+          { name: 'To Do', categoryKey: 'new' },
+          { name: 'Shipped', categoryKey: 'done' }
+        ])
+        expect(jira.lastSyncedAt).toBeInstanceOf(Date)
+      })
+
+      test('Should finish the sync and keep earlier statuses when detection fails', async () => {
+        const client = {
+          syncProjectIssues: vi.fn(async () => ({ synced: 1 })),
+          getProjectStatuses: vi.fn(async () => {
+            throw new Error('Jira down')
+          })
+        }
+
+        const result = await runJiraSync({
+          db,
+          locker: server.locker,
+          client,
+          logger
+        })
+
+        const { jira } = await stored()
+        expect(result).toEqual({ synced: 1, projects: 1 })
+        expect(jira.detectedStatuses).toEqual(previous)
+        expect(jira.lastSyncedAt).toBeInstanceOf(Date)
+        expect(logger.warn).toHaveBeenCalled()
+        expect(logger.error).not.toHaveBeenCalled()
+      })
+
+      test('Should keep earlier statuses and warn when Jira returns none', async () => {
+        const client = {
+          syncProjectIssues: vi.fn(async () => ({ synced: 1 })),
+          getProjectStatuses: vi.fn(async () => [])
+        }
+
+        await runJiraSync({ db, locker: server.locker, client, logger })
+
+        const { jira } = await stored()
+        expect(jira.detectedStatuses).toEqual(previous)
+        expect(jira.lastSyncedAt).toBeInstanceOf(Date)
+        expect(logger.warn).toHaveBeenCalledWith(
+          'Jira returned no statuses for project live'
+        )
+      })
     })
 
     test('Should skip when another instance holds the lock', async () => {

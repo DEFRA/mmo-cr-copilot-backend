@@ -175,7 +175,8 @@ describe('#projects routes', () => {
     const validPayload = {
       slug: 'SMPL',
       name: 'Sample Project',
-      type: 'ai-native'
+      type: 'ai-native',
+      jira: { projectKeys: ['SMPL'] }
     }
 
     test('Should reject request when user is not admin', async () => {
@@ -238,13 +239,94 @@ describe('#projects routes', () => {
         payload: validPayload
       })
 
-      const { statusCode } = await server.inject({
+      const { statusCode, result } = await server.inject({
         method: 'POST',
         url: '/api/projects',
         headers: adminHeaders,
         payload: validPayload
       })
       expect(statusCode).toBe(409)
+      expect(result).toEqual({
+        statusCode: 409,
+        error: 'Conflict',
+        message: 'That project slug is already in use'
+      })
+    })
+
+    const create = (payload) =>
+      server.inject({
+        method: 'POST',
+        url: '/api/projects',
+        headers: adminHeaders,
+        payload: { name: 'New', type: 'ai-adopted', ...payload }
+      })
+
+    test.each(['ABC', 'ABCD'])(
+      'Should accept the letters-only slug %s',
+      async (slug) => {
+        expect((await create({ slug })).statusCode).toBe(201)
+      }
+    )
+
+    test.each(['AB1', 'CR01', 'AB', 'ABCDE', 'abc', 'A-BC'])(
+      'Should reject the slug %s for a new project',
+      async (slug) => {
+        const { statusCode, result } = await create({ slug })
+
+        expect(statusCode).toBe(400)
+        expect(result.message).toBe('Invalid request input')
+      }
+    )
+
+    test('Should create an AI-Adopted project without a Jira key', async () => {
+      const { statusCode, result } = await create({ slug: 'ADPT' })
+
+      expect(statusCode).toBe(201)
+      expect(result.jira.projectKeys).toEqual([])
+    })
+
+    test('Should create an AI-Adopted project with one Jira key', async () => {
+      const { statusCode, result } = await create({
+        slug: 'ADPK',
+        jira: { projectKeys: ['MMO_CR'] }
+      })
+
+      expect(statusCode).toBe(201)
+      expect(result.jira.projectKeys).toEqual(['MMO_CR'])
+    })
+
+    test.each([
+      ['no jira block', {}],
+      ['an empty key list', { jira: { projectKeys: [] } }]
+    ])('Should reject an AI-Native project with %s', async (_, extra) => {
+      const { statusCode, result } = await create({
+        slug: 'NATV',
+        type: 'ai-native',
+        ...extra
+      })
+
+      expect(statusCode).toBe(400)
+      expect(result.message).toBe(
+        'AI-Native projects require exactly one Jira project key'
+      )
+      await expect(
+        db.collection(PROJECTS_COLLECTION).countDocuments({ slug: 'NATV' })
+      ).resolves.toBe(0)
+    })
+
+    test.each([
+      ['two keys', ['ONE', 'TWO']],
+      ['a lower-case key', ['mmo']],
+      ['a key starting with a digit', ['1MMO']]
+    ])('Should reject %s', async (_, projectKeys) => {
+      const { statusCode, result } = await create({
+        slug: 'KEYS',
+        type: 'ai-native',
+        jira: { projectKeys }
+      })
+
+      expect(statusCode).toBe(400)
+      expect(result.message).toBe('Invalid request input')
     })
   })
 
@@ -295,7 +377,8 @@ describe('#projects routes', () => {
         payload: {
           slug: 'PUTT',
           name: 'Put Test',
-          type: 'ai-native'
+          type: 'ai-native',
+          jira: { projectKeys: ['PUTT'] }
         }
       })
     })
@@ -341,6 +424,287 @@ describe('#projects routes', () => {
       })
       expect(statusCode).toBe(404)
     })
+
+    const update = (slug, payload) =>
+      server.inject({
+        method: 'PUT',
+        url: `/api/projects/${slug}`,
+        headers: adminHeaders,
+        payload
+      })
+    const nativeKeyMessage =
+      'AI-Native projects require exactly one Jira project key'
+    const fixedKeyMessage = 'The Jira project key cannot be changed'
+    const storedKeys = async (slug) =>
+      (await db.collection(PROJECTS_COLLECTION).findOne({ slug })).jira
+        .projectKeys
+
+    test('Should still read and rename a project with a digit slug', async () => {
+      await db.collection(PROJECTS_COLLECTION).insertOne({
+        slug: 'CR01',
+        name: 'Legacy',
+        type: 'ai-native',
+        jira: { projectKeys: ['CRO'] },
+        archivedAt: null
+      })
+      const read = await server.inject({
+        url: '/api/projects/CR01',
+        headers: adminHeaders
+      })
+      const renamed = await update('CR01', { name: 'Renamed' })
+
+      expect(read.statusCode).toBe(200)
+      expect(renamed.statusCode).toBe(200)
+      expect(renamed.result.name).toBe('Renamed')
+    })
+
+    test('Should allow a name-only update of an AI-Native project with its key', async () => {
+      const { statusCode, result } = await update('PUTT', { name: 'Renamed' })
+
+      expect(statusCode).toBe(200)
+      expect(result.jira.projectKeys).toEqual(['PUTT'])
+    })
+
+    test('Should check the AI-Native key rule on every update', async () => {
+      await db.collection(PROJECTS_COLLECTION).insertOne({
+        slug: 'NOKY',
+        name: 'No key',
+        type: 'ai-native',
+        jira: { projectKeys: [] },
+        archivedAt: null
+      })
+
+      const { statusCode, result } = await update('NOKY', { name: 'Renamed' })
+
+      expect(statusCode).toBe(400)
+      expect(result.message).toBe(nativeKeyMessage)
+    })
+
+    test.each([
+      ['changing', ['OTHR']],
+      ['clearing', []]
+    ])('Should reject %s a set Jira key', async (_, projectKeys) => {
+      const { statusCode, result } = await update('PUTT', {
+        jira: { projectKeys }
+      })
+
+      expect(statusCode).toBe(400)
+      expect(result).toEqual({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: fixedKeyMessage
+      })
+      expect(await storedKeys('PUTT')).toEqual(['PUTT'])
+    })
+
+    test('Should accept the same Jira key again', async () => {
+      const { statusCode, result } = await update('PUTT', {
+        name: 'Same key',
+        jira: { projectKeys: ['PUTT'] }
+      })
+
+      expect(statusCode).toBe(200)
+      expect(result.jira.projectKeys).toEqual(['PUTT'])
+    })
+
+    test('Should reject a second Jira key on update', async () => {
+      const { statusCode } = await update('PUTT', {
+        jira: { projectKeys: ['PUTT', 'MORE'] }
+      })
+
+      expect(statusCode).toBe(400)
+    })
+
+    describe('When an AI-Adopted project becomes AI-Native', () => {
+      beforeEach(async () => {
+        await server.inject({
+          method: 'POST',
+          url: '/api/projects',
+          headers: adminHeaders,
+          payload: { slug: 'ADPT', name: 'Adopted', type: 'ai-adopted' }
+        })
+      })
+
+      test('Should reject the change without a Jira key', async () => {
+        const { statusCode, result } = await update('ADPT', {
+          type: 'ai-native'
+        })
+
+        expect(statusCode).toBe(400)
+        expect(result.message).toBe(nativeKeyMessage)
+      })
+
+      test('Should accept the change with one Jira key in the same request', async () => {
+        const { statusCode, result } = await update('ADPT', {
+          type: 'ai-native',
+          jira: { projectKeys: ['ADPT'] }
+        })
+
+        expect(statusCode).toBe(200)
+        expect(result).toMatchObject({
+          type: 'ai-native',
+          jira: { projectKeys: ['ADPT'] }
+        })
+      })
+
+      test('Should add a Jira key once to a project without one', async () => {
+        const added = await update('ADPT', { jira: { projectKeys: ['ADPT'] } })
+        const changed = await update('ADPT', {
+          jira: { projectKeys: ['NEWK'] }
+        })
+
+        expect(added.statusCode).toBe(200)
+        expect(added.result).toMatchObject({
+          type: 'ai-adopted',
+          jira: { projectKeys: ['ADPT'] }
+        })
+        expect(changed.statusCode).toBe(400)
+        expect(changed.result.message).toBe(fixedKeyMessage)
+        expect(await storedKeys('ADPT')).toEqual(['ADPT'])
+      })
+
+      test('Should accept the change using the key already stored', async () => {
+        await update('ADPT', { jira: { projectKeys: ['ADPT'] } })
+
+        const { statusCode, result } = await update('ADPT', {
+          type: 'ai-native'
+        })
+
+        expect(statusCode).toBe(200)
+        expect(result.type).toBe('ai-native')
+      })
+
+      test('Should go back to AI-Adopted only with its key kept', async () => {
+        await update('ADPT', {
+          type: 'ai-native',
+          jira: { projectKeys: ['ADPT'] }
+        })
+        const dropped = await update('ADPT', {
+          type: 'ai-adopted',
+          jira: { projectKeys: [] }
+        })
+        const kept = await update('ADPT', { type: 'ai-adopted' })
+
+        expect(dropped.statusCode).toBe(400)
+        expect(dropped.result.message).toBe(fixedKeyMessage)
+        expect(kept.statusCode).toBe(200)
+        expect(kept.result).toMatchObject({
+          type: 'ai-adopted',
+          jira: { projectKeys: ['ADPT'] }
+        })
+      })
+    })
+
+    test('Should change only the Jira fields sent and never sync-owned fields', async () => {
+      const lastSyncedAt = new Date('2026-10-01T09:00:00.000Z')
+      await db.collection(PROJECTS_COLLECTION).updateOne(
+        { slug: 'PUTT' },
+        {
+          $set: {
+            'jira.lastSyncedAt': lastSyncedAt,
+            'jira.statusMapping': { Done: 'done' },
+            'jira.detectedStatuses': ['Done']
+          }
+        }
+      )
+
+      const { statusCode } = await update('PUTT', {
+        jira: {
+          boardId: 7,
+          statusMapping: { Done: 'waiting' },
+          detectedStatuses: [],
+          lastSyncedAt: '2020-01-01T00:00:00.000Z'
+        }
+      })
+
+      expect(statusCode).toBe(200)
+      const stored = await db
+        .collection(PROJECTS_COLLECTION)
+        .findOne({ slug: 'PUTT' })
+      expect(stored.jira).toEqual({
+        projectKeys: ['PUTT'],
+        storyPointsField: 'customfield_10016',
+        boardId: 7,
+        lastSyncedAt,
+        statusMapping: { Done: 'done' },
+        detectedStatuses: ['Done']
+      })
+    })
+  })
+
+  describe('POST /api/projects/{slug}/jira/sync', () => {
+    const sync = (slug = 'SYNC', headers = adminHeaders) =>
+      server.inject({
+        method: 'POST',
+        url: `/api/projects/${slug}/jira/sync`,
+        headers
+      })
+
+    beforeEach(async () => {
+      await db.collection(PROJECTS_COLLECTION).insertOne({
+        slug: 'SYNC',
+        name: 'Sync',
+        type: 'ai-adopted',
+        archivedAt: null,
+        jira: {
+          projectKeys: ['SYNC'],
+          storyPointsField: 'customfield_1',
+          lastSyncedAt: new Date('2026-10-01T09:00:00Z')
+        }
+      })
+    })
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    test('Should run a full sync on the shared client and store detected statuses', async () => {
+      const syncProjectIssues = vi
+        .spyOn(server.jira, 'syncProjectIssues')
+        .mockResolvedValue({ synced: 3, configured: true })
+      vi.spyOn(server.jira, 'getProjectStatuses').mockResolvedValue([
+        { name: 'To Do', categoryKey: 'new', issueType: 'Story' },
+        { name: 'Done', categoryKey: 'done', issueType: 'Story' }
+      ])
+      const before = Date.now()
+
+      const { statusCode, result } = await sync()
+
+      expect(statusCode).toBe(200)
+      expect(result).toEqual({ synced: 3, configured: true })
+      expect(syncProjectIssues).toHaveBeenCalledWith(
+        db,
+        'SYNC',
+        ['SYNC'],
+        'customfield_1',
+        {}
+      )
+      const { jira } = await db
+        .collection(PROJECTS_COLLECTION)
+        .findOne({ slug: 'SYNC' })
+      expect(jira.detectedStatuses).toEqual([
+        { name: 'To Do', categoryKey: 'new' },
+        { name: 'Done', categoryKey: 'done' }
+      ])
+      expect(jira.lastSyncedAt.getTime()).toBeGreaterThanOrEqual(before)
+    })
+
+    test('Should leave the project alone when Jira is not configured', async () => {
+      const { statusCode, result } = await sync()
+
+      expect(statusCode).toBe(200)
+      expect(result).toMatchObject({ synced: 0, configured: false })
+      const { jira } = await db
+        .collection(PROJECTS_COLLECTION)
+        .findOne({ slug: 'SYNC' })
+      expect(jira.lastSyncedAt).toEqual(new Date('2026-10-01T09:00:00Z'))
+      expect(jira.detectedStatuses).toBeUndefined()
+    })
+
+    test('Should refuse a non-admin and a missing project', async () => {
+      expect((await sync('SYNC', projectAdminHeaders)).statusCode).toBe(403)
+      expect((await sync('MISS')).statusCode).toBe(404)
+    })
   })
 
   describe('DELETE /api/projects/{slug}', () => {
@@ -361,7 +725,8 @@ describe('#projects routes', () => {
         payload: {
           slug: 'DELT',
           name: 'Del Test',
-          type: 'ai-native'
+          type: 'ai-native',
+          jira: { projectKeys: ['DELT'] }
         }
       })
 
@@ -445,7 +810,8 @@ describe('#projects routes', () => {
         payload: {
           slug: 'SPRT',
           name: 'Sprint Project',
-          type: 'ai-native'
+          type: 'ai-native',
+          jira: { projectKeys: ['SPRT'] }
         }
       })
 
@@ -614,6 +980,7 @@ describe('#projects routes', () => {
           slug: 'FRSH',
           name: 'Fresh',
           type: 'ai-native',
+          jira: { projectKeys: ['FRSH'] },
           entraGroupIds: ['g']
         }
       })
@@ -743,7 +1110,8 @@ describe('#projects routes', () => {
           payload: {
             slug: 'SECR',
             name: 'Secret',
-            type: 'ai-native'
+            type: 'ai-native',
+            jira: { projectKeys: ['SECR'] }
           }
         })
 
@@ -766,7 +1134,12 @@ describe('#projects routes', () => {
         method: 'POST',
         url: '/api/projects',
         headers: adminHeaders,
-        payload: { slug: 'CHRN', name: 'Churny', type: 'ai-native' }
+        payload: {
+          slug: 'CHRN',
+          name: 'Churny',
+          type: 'ai-native',
+          jira: { projectKeys: ['CHRN'] }
+        }
       })
       await db.collection('ai_survival').deleteMany({})
       await db.collection('ai_survival').insertMany(

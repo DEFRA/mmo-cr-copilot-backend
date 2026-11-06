@@ -9,14 +9,20 @@ import Joi from 'joi'
 
 export const AUDIT_ENTITIES = {
   commitClassification: 'commit-classification',
+  jiraWorkflow: 'jira-workflow',
   personaMapping: 'persona-mapping',
+  repositoryMapping: 'repository-mapping',
   roleMapping: 'role-mapping'
 }
 
 export const AUDIT_ACTIONS = {
   commitClassificationUpdated: 'commit-classification.updated',
+  jiraWorkflowUpdated: 'jira-workflow.updated',
   personaMappingUpserted: 'persona-mapping.upserted',
   personaMappingDeleted: 'persona-mapping.deleted',
+  repositorySonarKeySet: 'repository.sonar-key.set',
+  repositorySonarKeyUpdated: 'repository.sonar-key.updated',
+  repositorySonarKeyCleared: 'repository.sonar-key.cleared',
   roleMappingCreated: 'role-mapping.created',
   roleMappingUpdated: 'role-mapping.updated',
   roleMappingDeleted: 'role-mapping.deleted'

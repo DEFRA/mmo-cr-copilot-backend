@@ -3,7 +3,7 @@ description: 'Plans and coordinates complex, multi-step work on the DEFRA/MMO Co
 name: 'Backend Orchestrator'
 tools: [read, search, todo, agent]
 argument-hint: 'Describe the complex backend task, feature or change to plan and coordinate.'
-model: Gemini 3.8 Flash (copilot)
+model: Claude Sonnet 5.5 (copilot)
 agents:
   ['Backend Planner', 'Backend Developer', 'Backend Code Reviewer', 'Explore']
 ---

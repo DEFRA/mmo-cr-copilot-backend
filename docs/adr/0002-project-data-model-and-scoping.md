@@ -12,8 +12,8 @@ SonarCloud keys come from the `SONAR_PROJECT_MAP` environment JSON, persona mapp
 everything.
 
 The dashboard is moving to many projects feeding one service. Each project has a type
-(**AI-adopted** or **AI-native**), is onboarded by a dashboard admin, and is visible only to the
-Entra ID groups assigned to it. A 6-month backfill per AI-adopted project will multiply the stored
+(**AI-Adopted** or **AI-Native**), is onboarded by a dashboard admin, and is visible only to the
+Entra ID groups assigned to it. A 6-month backfill per AI-Adopted project will multiply the stored
 volume, so returning every payload to the browser will not scale.
 
 **Decided:** a repository belongs to exactly one project.
@@ -23,7 +23,7 @@ volume, so returning every payload to the browser will not scale.
 **Accepted (confirmed in E2).**
 
 - Adopted a `projects` collection: `slug` (unique index), `name`, `type` (`ai-adopted` | `ai-native`),
-  `adoptionStartDate` (AI-adopted only, splits baseline from adopted PRs), `sprintCalendar` (fixed
+  `adoptionStartDate` (AI-Adopted only, splits baseline from adopted PRs), `sprintCalendar` (fixed
   cadence or Jira board), `jira` (project keys and story points field), `adminGroupIds[]` (project
   admin groups), `entraGroupIds[]` (project user groups), timestamps and `archivedAt`.
 - Adopted a `repositories` collection: `fullName` (unique index — enforces the one-repo-per-project

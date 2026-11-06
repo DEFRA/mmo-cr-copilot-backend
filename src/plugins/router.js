@@ -1,6 +1,7 @@
 import { auditLogs } from '#/routes/audit-logs.js'
 import { authRoutes } from '#/routes/auth.js'
 import { health } from '#/routes/health.js'
+import { jiraWorkflowRoutes } from '#/routes/jira-workflow.js'
 import { payloads } from '#/routes/payloads.js'
 import { personaMappings } from '#/routes/persona-mappings.js'
 import { projectsRoutes } from '#/routes/projects.js'
@@ -20,6 +21,7 @@ export const router = {
         ...payloads,
         ...survival,
         ...personaMappings,
+        ...jiraWorkflowRoutes,
         ...auditLogs,
         ...sonar,
         ...projectsRoutes,

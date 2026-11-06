@@ -299,4 +299,210 @@ describe('#createJiraClient', () => {
       expect(fetch.mock.calls[1][0]).toContain('startAt=1')
     })
   })
+
+  describe('Truncated changelog', () => {
+    const statusChange = (created, fromString, toString) => ({
+      created,
+      items: [{ field: 'status', fromString, toString }]
+    })
+    const searchWith = (changelog) =>
+      jsonResponse({
+        issues: [
+          {
+            key: 'MMO-4',
+            fields: {
+              status: { name: 'Done', statusCategory: { key: 'done' } },
+              created: '2026-07-01T09:00:00.000Z'
+            },
+            changelog
+          }
+        ],
+        isLast: true
+      })
+
+    test('Should fetch every page of a changelog the search cut short', async () => {
+      const fetch = vi
+        .fn()
+        .mockResolvedValueOnce(
+          searchWith({
+            total: 3,
+            histories: [
+              statusChange('2026-07-01T10:00:00.000Z', 'To Do', 'In Dev')
+            ]
+          })
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({
+            values: [
+              statusChange('2026-07-01T10:00:00.000Z', 'To Do', 'In Dev'),
+              statusChange('2026-07-02T10:00:00.000Z', 'In Dev', 'In Test')
+            ],
+            isLast: false
+          })
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({
+            values: [
+              statusChange('2026-07-03T10:00:00.000Z', 'In Test', 'Done')
+            ],
+            isLast: true
+          })
+        )
+      const db = fakeDb()
+
+      await client({ fetch }).syncProjectIssues(db, 'mmo', ['MMO'])
+
+      expect(fetch.mock.calls[1][0]).toBe(
+        `${BASE}/rest/api/3/issue/MMO-4/changelog?startAt=0&maxResults=100`
+      )
+      expect(fetch.mock.calls[2][0]).toContain('startAt=2')
+      expect(db.docs[0].statusHistory.map((c) => c.to)).toEqual([
+        'In Dev',
+        'In Test',
+        'Done'
+      ])
+    })
+
+    test('Should not fetch a changelog that is complete', async () => {
+      const fetch = vi.fn(async () =>
+        searchWith({
+          total: 1,
+          histories: [statusChange('2026-07-01T10:00:00.000Z', 'To Do', 'Done')]
+        })
+      )
+
+      await client({ fetch }).syncProjectIssues(fakeDb(), 'mmo', ['MMO'])
+
+      expect(fetch).toHaveBeenCalledTimes(1)
+    })
+
+    test('Should keep an issue with an invalid key without fetching its changelog', async () => {
+      const fetch = vi.fn(async () =>
+        jsonResponse({
+          issues: [
+            {
+              key: '../admin',
+              fields: {
+                status: { name: 'Done', statusCategory: { key: 'done' } },
+                created: '2026-07-01T09:00:00.000Z'
+              },
+              changelog: {
+                total: 5,
+                histories: [
+                  statusChange('2026-07-01T10:00:00.000Z', 'To Do', 'Done')
+                ]
+              }
+            }
+          ],
+          isLast: true
+        })
+      )
+      const db = fakeDb()
+
+      await client({ fetch }).syncProjectIssues(db, 'mmo', ['MMO'])
+
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(db.docs).toHaveLength(1)
+      expect(db.docs[0].statusHistory).toHaveLength(1)
+    })
+  })
+
+  describe('#getProjectStatuses', () => {
+    test('Should flatten statuses across issue types with their categories', async () => {
+      const fetch = vi.fn(async () =>
+        jsonResponse([
+          {
+            name: 'Story',
+            statuses: [
+              { name: 'To Do', statusCategory: { key: 'new' } },
+              { name: 'In Dev', statusCategory: { key: 'indeterminate' } }
+            ]
+          },
+          {
+            name: 'Bug',
+            statuses: [
+              { name: 'Done', statusCategory: { key: 'done' } },
+              { name: 'Odd', statusCategory: { key: 'undefined' } },
+              { statusCategory: { key: 'new' } }
+            ]
+          },
+          { name: 'Epic' }
+        ])
+      )
+
+      const statuses = await client({ fetch }).getProjectStatuses('MMO')
+
+      expect(fetch.mock.calls[0][0]).toBe(
+        `${BASE}/rest/api/3/project/MMO/statuses`
+      )
+      expect(statuses).toEqual([
+        { name: 'To Do', categoryKey: 'new', issueType: 'Story' },
+        { name: 'In Dev', categoryKey: 'indeterminate', issueType: 'Story' },
+        { name: 'Done', categoryKey: 'done', issueType: 'Bug' },
+        { name: 'Odd', categoryKey: null, issueType: 'Bug' }
+      ])
+    })
+
+    test('Should return nothing for an unexpected response', async () => {
+      const fetch = vi.fn(async () => jsonResponse({}))
+
+      await expect(
+        client({ fetch }).getProjectStatuses('MMO')
+      ).resolves.toEqual([])
+    })
+
+    test('Should not call Jira when unconfigured or for a malformed key', async () => {
+      const fetch = vi.fn()
+
+      await expect(
+        client({ fetch, baseUrl: '' }).getProjectStatuses('MMO')
+      ).resolves.toEqual([])
+      await expect(
+        client({ fetch }).getProjectStatuses('../x')
+      ).resolves.toEqual([])
+      expect(fetch).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('#listProjectJiraIssues', () => {
+    test('Should return each issue with its flow and ISO dates', async () => {
+      const docs = [
+        {
+          _id: 'internal',
+          key: 'MMO-5',
+          projectSlug: 'mmo',
+          status: { name: 'Done', categoryKey: 'done' },
+          created: new Date('2026-07-01T09:00:00.000Z'),
+          statusHistory: [
+            {
+              at: new Date('2026-07-02T09:00:00.000Z'),
+              from: 'To Do',
+              to: 'In Progress'
+            },
+            {
+              at: new Date('2026-07-04T09:00:00.000Z'),
+              from: 'In Progress',
+              to: 'Done'
+            }
+          ]
+        }
+      ]
+      const db = {
+        collection: () => ({
+          find: () => ({ sort: () => ({ toArray: async () => docs }) })
+        })
+      }
+
+      const [issue] = await client().listProjectJiraIssues(db, 'mmo', null)
+
+      expect(issue).not.toHaveProperty('_id')
+      expect(issue.flow).toMatchObject({
+        stageKind: 'done',
+        startedAt: '2026-07-02T09:00:00.000Z',
+        doneAt: '2026-07-04T09:00:00.000Z',
+        firstDoneAt: '2026-07-04T09:00:00.000Z',
+        cycleDays: 2
+      })
+    })
+  })
 })

@@ -1,0 +1,21 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/plugins/router.js",
+  "added": 2,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 2,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "4,24"
+  },
+  "ai": [
+    [4, "a", "9b3940cf", 0],
+    [24, "a", "b7eb0ef2", 0]
+  ]
+}

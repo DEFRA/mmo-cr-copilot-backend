@@ -3,9 +3,16 @@ import {
   PR_JIRA_LINKS_COLLECTION
 } from '#/services/jira.js'
 import { PAYLOADS_COLLECTION, toPayload } from '#/services/payloads.js'
-import { findProjectPayloads } from '#/services/projects.js'
+import {
+  PROJECTS_COLLECTION,
+  findProjectPayloads
+} from '#/services/projects.js'
 import { computeFlowMetrics } from '#/services/flow-metrics.js'
 import { computeComplexityScore } from '#/services/complexity.js'
+import {
+  attachIssueFlow,
+  summariseUnmapped
+} from '#/services/workflow-stages.js'
 
 function sumLines(commits, field) {
   return (commits ?? []).reduce(
@@ -59,21 +66,21 @@ export async function computeDeliveryMetrics(
   projectSlug,
   { from, to } = {}
 ) {
-  const issueFilter = {
-    projectSlug,
-    'status.categoryKey': 'done'
-  }
-  const resolvedFilter = {}
-  if (from) resolvedFilter.$gte = new Date(from)
-  if (to) resolvedFilter.$lt = new Date(to)
-  if (Object.keys(resolvedFilter).length > 0) {
-    issueFilter.resolved = resolvedFilter
-  }
-
-  const doneStories = await db
-    .collection(JIRA_ISSUES_COLLECTION)
-    .find(issueFilter)
-    .toArray()
+  const [storedIssues, project, scopes] = await Promise.all([
+    db.collection(JIRA_ISSUES_COLLECTION).find({ projectSlug }).toArray(),
+    db.collection(PROJECTS_COLLECTION).findOne({ slug: projectSlug }),
+    db.collection('jira-sprint-scope').find({ projectSlug }).toArray()
+  ])
+  const { workflow, issues } = attachIssueFlow(storedIssues, project)
+  const fromDate = from ? new Date(from) : null
+  const toDate = to ? new Date(to) : null
+  const doneStories = issues.filter(
+    ({ flow }) =>
+      flow.stageKind === 'done' &&
+      flow.doneAt &&
+      (!fromDate || flow.doneAt >= fromDate) &&
+      (!toDate || flow.doneAt < toDate)
+  )
 
   const links = await db
     .collection(PR_JIRA_LINKS_COLLECTION)
@@ -137,24 +144,11 @@ export async function computeDeliveryMetrics(
   const cycleTimes = []
 
   for (const story of doneStories) {
-    const created = story.created ? new Date(story.created) : null
-    const resolved = story.resolved
-      ? new Date(story.resolved)
-      : story.updated
-        ? new Date(story.updated)
-        : null
-    const started = story.started ? new Date(story.started) : created
+    const cycleTime = Math.max(0.1, story.flow.cycleDays ?? 0.1)
 
-    const leadTime =
-      created && resolved
-        ? Math.max(0, (resolved - created) / (1000 * 60 * 60 * 24))
-        : 0
-    const cycleTime =
-      started && resolved
-        ? Math.max(0.1, (resolved - started) / (1000 * 60 * 60 * 24))
-        : 0.1
-
-    leadTimes.push(leadTime)
+    if (Number.isFinite(story.flow.leadDays)) {
+      leadTimes.push(story.flow.leadDays)
+    }
     cycleTimes.push(cycleTime)
     totalCycleDays += cycleTime
 
@@ -164,7 +158,7 @@ export async function computeDeliveryMetrics(
         : Number(story.storyPoints) || 0
     totalStoryPoints += sp
 
-    if (story.reopenCount > 0) reopenedStories += 1
+    if (story.flow.reopenCount > 0) reopenedStories += 1
 
     const linkedPrIds = jiraKeyToPrs.has(story.key)
       ? [...jiraKeyToPrs.get(story.key)]
@@ -277,22 +271,14 @@ export async function computeDeliveryMetrics(
     storiesDelivered > 0
       ? Math.round((reopenedStories / storiesDelivered) * 1000) / 10
       : 0
-  const [allIssues, scopes, project] = await Promise.all([
-    db.collection(JIRA_ISSUES_COLLECTION).find({ projectSlug }).toArray(),
-    db.collection('jira-sprint-scope').find({ projectSlug }).toArray(),
-    db.collection('projects').findOne({ slug: projectSlug })
-  ])
   const flow = computeFlowMetrics({
     done: doneStories,
-    issues: allIssues,
+    issues,
     prsByKey,
     payloads,
     scopes,
     from,
-    to,
-    ...(project?.jira?.waitingStatuses?.length
-      ? { waitingStatuses: project.jira.waitingStatuses }
-      : {})
+    to
   })
 
   return {
@@ -309,6 +295,11 @@ export async function computeDeliveryMetrics(
     firstScanPassRate,
     reopenRate,
     ...flow,
+    workflow: {
+      source: workflow.source,
+      version: workflow.version,
+      unmappedStatuses: summariseUnmapped(issues)
+    },
     warnings
   }
 }

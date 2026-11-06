@@ -1,13 +1,10 @@
 import { config } from '#/config.js'
 import { acquireLock } from '#/common/helpers/mongo-lock.js'
 import { JIRA_ISSUES_COLLECTION, createJiraClient } from '#/services/jira.js'
+import { syncOneProject } from '#/services/jira-project-sync.js'
 import { PROJECTS_COLLECTION } from '#/services/projects.js'
 
 const LOCK_RESOURCE = 'jira-sync'
-const SPRINT_SCOPE_COLLECTION = 'jira-sprint-scope'
-const DUPLICATE_KEY_ERROR = 11000
-// Jira compares `updated` at minute precision in the user's time zone, so each run overlaps the last.
-const OVERLAP_MS = 15 * 60 * 1000
 
 /**
  * One incremental sync of every active project with Jira keys. A Mongo lock
@@ -32,32 +29,9 @@ export async function runJiraSync({ db, locker, client, logger }) {
 
     let synced = 0
     for (const project of projects) {
-      const startedAt = new Date()
-      const lastSyncedAt = project.jira?.lastSyncedAt
       try {
-        const result = await client.syncProjectIssues(
-          db,
-          project.slug,
-          project.jira.projectKeys,
-          project.jira.storyPointsField,
-          lastSyncedAt
-            ? {
-                updatedSince: new Date(
-                  new Date(lastSyncedAt).getTime() - OVERLAP_MS
-                )
-              }
-            : {}
-        )
-        synced += result.synced ?? 0
-        if (project.jira.boardId) {
-          await captureSprintScope({ db, client, project })
-        }
-        await db
-          .collection(PROJECTS_COLLECTION)
-          .updateOne(
-            { slug: project.slug },
-            { $set: { 'jira.lastSyncedAt': startedAt } }
-          )
+        const result = await syncOneProject({ db, client, project, logger })
+        synced += result?.synced ?? 0
       } catch (err) {
         logger.error({ err }, `Jira sync failed for project ${project.slug}`)
       }
@@ -65,45 +39,6 @@ export async function runJiraSync({ db, locker, client, logger }) {
     return { synced, projects: projects.length }
   } finally {
     await lock.free()
-  }
-}
-
-/**
- * Records the issues in each active sprint the first time it is seen, so
- * sprint predictability compares delivery against the scope committed at start.
- */
-export async function captureSprintScope({ db, client, project }) {
-  const sprints = await client.getBoardSprints(project.jira.boardId)
-  const scope = db.collection(SPRINT_SCOPE_COLLECTION)
-  for (const sprint of sprints) {
-    if (sprint.state !== 'active' || !Number.isInteger(sprint.id)) continue
-    if (await scope.findOne({ sprintId: sprint.id })) continue
-
-    const issueKeys = []
-    let nextPageToken
-    do {
-      const page = await client.searchIssues(`sprint = ${sprint.id}`, {
-        fields: ['key'],
-        expand: '',
-        nextPageToken
-      })
-      issueKeys.push(...(page.issues ?? []).map((issue) => issue.key))
-      nextPageToken = page.isLast === false ? page.nextPageToken : undefined
-    } while (nextPageToken)
-
-    try {
-      await scope.insertOne({
-        sprintId: sprint.id,
-        projectSlug: project.slug,
-        name: sprint.name,
-        startDate: sprint.startDate ? new Date(sprint.startDate) : null,
-        endDate: sprint.endDate ? new Date(sprint.endDate) : null,
-        issueKeys,
-        capturedAt: new Date()
-      })
-    } catch (err) {
-      if (err?.code !== DUPLICATE_KEY_ERROR) throw err
-    }
   }
 }
 

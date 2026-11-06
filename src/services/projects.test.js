@@ -1,3 +1,5 @@
+import { Collection } from 'mongodb'
+
 import { PAYLOADS_COLLECTION } from '#/services/payloads.js'
 
 describe('#projects service', () => {
@@ -60,6 +62,30 @@ describe('#projects service', () => {
       const found = await service.findProject(db, 'non-existent')
       expect(found).toBeNull()
     })
+
+    test('Should turn a duplicate slug from a concurrent create into a conflict', async () => {
+      await service.createProject(db, { slug: 'DUPE', name: 'First' })
+
+      await expect(
+        service.createProject(db, { slug: 'DUPE', name: 'Second' })
+      ).rejects.toMatchObject({
+        output: {
+          statusCode: 409,
+          payload: { message: 'That project slug is already in use' }
+        }
+      })
+    })
+
+    test('Should rethrow any other create failure', async () => {
+      vi.spyOn(Collection.prototype, 'insertOne').mockRejectedValueOnce(
+        new Error('connection lost')
+      )
+
+      await expect(
+        service.createProject(db, { slug: 'FAIL', name: 'Fail' })
+      ).rejects.toThrow('connection lost')
+      vi.restoreAllMocks()
+    })
   })
 
   describe('#listProjects', () => {
@@ -119,6 +145,73 @@ describe('#projects service', () => {
       })
       expect(result).toBeNull()
     })
+
+    test('Should update Jira fields one by one and keep the rest', async () => {
+      const lastSyncedAt = new Date('2026-10-01T09:00:00.000Z')
+      await db.collection(service.PROJECTS_COLLECTION).insertOne({
+        slug: 'JIRA',
+        jira: {
+          projectKeys: [],
+          storyPointsField: 'customfield_1',
+          lastSyncedAt
+        }
+      })
+
+      const updated = await service.updateProject(db, 'JIRA', {
+        jira: { projectKeys: ['NEW'] }
+      })
+
+      expect(updated.jira).toEqual({
+        projectKeys: ['NEW'],
+        storyPointsField: 'customfield_1',
+        lastSyncedAt
+      })
+    })
+
+    test('Should refuse a first Jira key once another write has set one', async () => {
+      await db.collection(service.PROJECTS_COLLECTION).insertOne({
+        slug: 'RACE',
+        name: 'Race',
+        jira: { projectKeys: ['WON'] }
+      })
+
+      await expect(
+        service.updateProject(db, 'RACE', {
+          name: 'Lost',
+          jira: { projectKeys: ['LOST'] }
+        })
+      ).rejects.toMatchObject({
+        output: {
+          statusCode: 400,
+          payload: { message: 'The Jira project key cannot be changed' }
+        }
+      })
+      const stored = await db
+        .collection(service.PROJECTS_COLLECTION)
+        .findOne({ slug: 'RACE' })
+      expect(stored).toMatchObject({
+        name: 'Race',
+        jira: { projectKeys: ['WON'] }
+      })
+    })
+
+    test('Should return null for a missing project when Jira keys are sent', async () => {
+      await expect(
+        service.updateProject(db, 'GONE', { jira: { projectKeys: ['KEY'] } })
+      ).resolves.toBeNull()
+    })
+
+    test('Should set Jira fields on a project whose jira is null', async () => {
+      await db
+        .collection(service.PROJECTS_COLLECTION)
+        .insertOne({ slug: 'NULJ', jira: null })
+
+      const updated = await service.updateProject(db, 'NULJ', {
+        jira: { projectKeys: ['KEY'] }
+      })
+
+      expect(updated.jira).toEqual({ projectKeys: ['KEY'] })
+    })
   })
 
   describe('#deleteProject', () => {
@@ -154,16 +247,15 @@ describe('#projects service', () => {
       const repo = await service.mapRepository(db, {
         fullName: 'DEFRA/test-repo',
         projectSlug: 'test-project',
-        sonarProjectKey: 'sonar-test',
         mappedBy: 'admin'
       })
 
       expect(repo).toMatchObject({
         fullName: 'DEFRA/test-repo',
         projectSlug: 'test-project',
-        sonarProjectKey: 'sonar-test',
         mappedBy: 'admin'
       })
+      expect(repo.sonarProjectKey).toBeUndefined()
       expect(repo.mappedAt).toBeDefined()
 
       const payload = await db
@@ -207,6 +299,120 @@ describe('#projects service', () => {
     test('Should return null when finding non-existent repository', async () => {
       const found = await service.findRepository(db, 'DEFRA/missing')
       expect(found).toBeNull()
+    })
+  })
+
+  describe('SonarCloud project keys', () => {
+    const repositories = () => db.collection(service.REPOSITORIES_COLLECTION)
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    test.each([
+      [undefined, undefined],
+      [null, null],
+      ['', null],
+      ['   ', null],
+      [' DEFRA_key ', 'DEFRA_key']
+    ])('Should normalise %j to %j', (input, expected) => {
+      expect(service.normaliseSonarKey(input)).toBe(expected)
+    })
+
+    test('Should keep the stored key when a repository is re-mapped', async () => {
+      await repositories().insertOne({
+        fullName: 'DEFRA/own',
+        projectSlug: 'PROJ',
+        sonarProjectKey: 'DEFRA_own'
+      })
+
+      const remapped = await service.mapRepository(db, {
+        fullName: 'DEFRA/own',
+        projectSlug: 'OTHR',
+        sonarProjectKey: 'IGNORED'
+      })
+
+      expect(remapped).toMatchObject({
+        projectSlug: 'OTHR',
+        sonarProjectKey: 'DEFRA_own'
+      })
+    })
+
+    test('Should set, change and clear the key of a repository', async () => {
+      await repositories().insertOne({
+        fullName: 'DEFRA/repo',
+        projectSlug: 'PROJ'
+      })
+
+      const set = await service.setRepositorySonarKey(db, 'DEFRA/repo', 'A')
+      const changed = await service.setRepositorySonarKey(
+        db,
+        'DEFRA/repo',
+        ' B '
+      )
+      const cleared = await service.setRepositorySonarKey(db, 'DEFRA/repo', '')
+
+      expect(set.sonarProjectKey).toBe('A')
+      expect(changed.sonarProjectKey).toBe('B')
+      expect(cleared).toEqual({
+        fullName: 'DEFRA/repo',
+        projectSlug: 'PROJ',
+        sonarProjectKey: null
+      })
+    })
+
+    test('Should return null for an unknown repository without creating it', async () => {
+      const result = await service.setRepositorySonarKey(
+        db,
+        'DEFRA/ghost',
+        'GHOST'
+      )
+
+      expect(result).toBeNull()
+      await expect(repositories().countDocuments()).resolves.toBe(0)
+    })
+
+    test('Should map a duplicate key error from a concurrent write to a conflict', async () => {
+      await repositories().insertMany([
+        { fullName: 'DEFRA/a', sonarProjectKey: 'TAKEN' },
+        { fullName: 'DEFRA/b' }
+      ])
+      // Skip the pre-check so the unique index has to catch the duplicate.
+      vi.spyOn(Collection.prototype, 'findOne').mockResolvedValueOnce(null)
+
+      await expect(
+        service.setRepositorySonarKey(db, 'DEFRA/b', 'TAKEN')
+      ).rejects.toMatchObject({
+        output: {
+          statusCode: 409,
+          payload: {
+            message: 'That SonarCloud project key is already in use'
+          }
+        }
+      })
+    })
+
+    test('Should rethrow any other write failure', async () => {
+      await repositories().insertOne({ fullName: 'DEFRA/a' })
+      vi.spyOn(Collection.prototype, 'findOneAndUpdate').mockRejectedValueOnce(
+        new Error('connection lost')
+      )
+
+      await expect(
+        service.setRepositorySonarKey(db, 'DEFRA/a', 'KEY')
+      ).rejects.toThrow('connection lost')
+    })
+
+    test('Should allow many repositories without a key', async () => {
+      await repositories().insertMany([
+        { fullName: 'DEFRA/x', sonarProjectKey: null },
+        { fullName: 'DEFRA/y', sonarProjectKey: null },
+        { fullName: 'DEFRA/z', sonarProjectKey: '' },
+        { fullName: 'DEFRA/w', sonarProjectKey: '' },
+        { fullName: 'DEFRA/v' }
+      ])
+
+      await expect(repositories().countDocuments()).resolves.toBe(5)
     })
   })
 

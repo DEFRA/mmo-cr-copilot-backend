@@ -26,7 +26,7 @@ metadata schemas seen and `calculatedAt`. `surviving` can never exceed `merged`.
 - `computeCodeChurn` returns CCR = `100 × (merged − surviving) / merged` over a project's records,
   per origin as well, with the discount `1 − CCR` when CCR is above 25 (rounded to one decimal).
   With no measured pull request it is unavailable and no discount applies.
-  `codeDurability` in the AI-native leverage response is derived from the same records.
+  `codeDurability` in the AI-Native leverage response is derived from the same records.
 
 **Usage.** `commitBreakdown[].attribution` accepts an optional `usage` object, only for
 `source: extension`: up to 20 models with request and token counts, `sessions` and

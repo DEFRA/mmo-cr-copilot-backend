@@ -126,28 +126,49 @@ git config --global core.autocrlf false
 
 ## API endpoints
 
-| Endpoint                                     | Description                                              |
-| :------------------------------------------- | :------------------------------------------------------- |
-| `GET: /health`                               | Platform health check (no token)                         |
-| `POST: /api/auth/authorize`                  | Sign-in check: the caller's roles, or `403` if none      |
-| `GET: /api/auth/me`                          | The caller's roles and project access                    |
-| `GET/POST/PATCH/DELETE: /api/role-mappings`  | Manage group-to-role mappings (Dashboard Admin only)     |
-| `GET: /api/ingest/repositories/{fullName}`   | Is a repository mapped? (`x-ingest-token`)               |
-| `POST: /api/payloads`                        | Ingest one analytics payload (requires `x-ingest-token`) |
-| `POST: /api/survival`                        | Ingest one AI code survival record (`x-ingest-token`)    |
-| `GET: /api/projects/{slug}/churn`            | 21-day AI code churn from survival records               |
-| `GET: /api/payloads`                         | Latest payload per repository and pull request           |
-| `GET: /api/payloads/{repository}/{prNumber}` | Full payload history for one pull request, newest first  |
-| `GET: /api/sonar/overview`                   | Gate, coverage, bugs, vulnerabilities per linked repo    |
-| `GET: /api/sonar/repo?repository=`           | Main branch quality metrics for one repository           |
-| `GET: /api/sonar/pr?repository=&prNumber=`   | New code quality metrics for one pull request            |
-
-Every route except `GET /health`, `POST /api/payloads`, `POST /api/survival` and
-`GET /api/ingest/repositories/{fullName}` requires a valid Entra access token. See
-[Authentication](#authentication).
+| Endpoint                                                                           | Description                                                        |
+| :--------------------------------------------------------------------------------- | :----------------------------------------------------------------- |
+| `GET: /health`                                                                     | Platform health check (no token)                                   |
+| `POST: /api/auth/authorize`                                                        | Sign-in check: the caller's roles, or `403` if none                |
+| `GET: /api/auth/me`                                                                | The caller's roles and project access                              |
+| `GET/POST/PATCH/DELETE: /api/role-mappings`                                        | Manage group-to-role mappings (Dashboard Admin only)               |
+| `GET: /api/ingest/repositories/{fullName}`                                         | Is a repository mapped? (`x-ingest-token`)                         |
+| `POST: /api/payloads`                                                              | Ingest one analytics payload (requires `x-ingest-token`)           |
+| `POST: /api/survival`                                                              | Ingest one AI code survival record (`x-ingest-token`)              |
+| `GET: /api/projects/{slug}/churn`                                                  | 21-day AI code churn from survival records                         |
+| `PUT: /api/repositories/{fullName}`                                                | Map a repository to a project (its SonarCloud key is kept)         |
+| `PUT: /api/repositories/{fullName}/sonar-key`                                      | Set, change or clear one repository's SonarCloud project key       |
+| `GET: /api/payloads`                                                               | Latest payload per repository and pull request                     |
+| `GET: /api/payloads/{repository}/{prNumber}`                                       | Full payload history for one pull request, newest first            |
+| `GET: /api/sonar/overview`                                                         | Gate, coverage, bugs, vulnerabilities per linked repo              |
+| `GET: /api/sonar/repo?repository=`                                                 | Main branch quality metrics for one repository                     |
+| `GET: /api/sonar/pr?repository=&prNumber=`                                         | New code quality metrics for one pull request                      |
+| `GET/PUT: /api/projects/{slug}/jira/workflow`                                      | The project's Jira workflow stages (Project or Dashboard Admin)    |
+| `GET: /api/projects/{slug}/jira/statuses`                                          | Jira statuses seen, detected and live (Project or Dashboard Admin) |
+| Every route except `GET /health`, `POST /api/payloads`, `POST /api/survival` and   |
+| `GET /api/ingest/repositories/{fullName}` requires a valid Entra access token. See |
+| [Authentication](#authentication).                                                 |
 
 `{repository}` is URL encoded because it contains a `/`, for example
-`/api/payloads/DEFRA%2Fmmo-cr-copilot-dashboard/42`.
+`/api/payloads/DEFRA%2Fmmo-cr-copilot-dashboard/42`. `{fullName}` is encoded the same way.
+
+`PUT /api/repositories/{fullName}/sonar-key` takes `{ "sonarProjectKey": "DEFRA_repo" }` and returns
+the repository record. `null` or `""` clears the key. Keys are trimmed, match `^[\w.:-]+$`, are at
+most 255 characters and belong to one repository only: a key already in use is `409` with the message
+`That SonarCloud project key is already in use` (unique index on `repositories.sonarProjectKey`). A
+Dashboard Admin may set any repository's key and a Project Admin only those in their own project;
+anyone else gets `403` (Project User) or `404`. Each change is audited as `repository.sonar-key.set`,
+`.updated` or `.cleared`. Nothing is sent to SonarCloud when a key is saved. This is the only route
+that writes the key: `PUT /api/repositories/{fullName}` ignores a `sonarProjectKey` in its body and
+keeps the stored key when a repository is re-mapped. See
+[ADR 0010](docs/adr/0010-project-slug-jira-key-and-sonar-mapping.md).
+
+The Jira workflow endpoints are for a Project Admin of that project or a Dashboard Admin (`403` for a
+Project User, `404` otherwise) and return `422` when the project has no Jira key. With no saved
+mapping, the workflow is detected from the project's Jira statuses at each scheduled sync, or falls
+back to the default status names. `PUT` takes `{ version, stages: [{ id, statuses }] }` and returns
+`409` when `version` is stale. Delivery metrics and `GET /api/projects/{slug}/jira-issues` use the
+effective workflow. See [ADR 0011](docs/adr/0011-jira-workflow-status-mapping.md).
 
 `POST /api/survival` takes the `ai-survival` record produced by the scheduled survival workflow in
 `mmo-cr-devops-common`: counts of AI and human lines merged and surviving after `windowDays`, with
@@ -225,9 +246,15 @@ payloads appear) is in the
 
 What this service does in each step:
 
-1. `POST /api/projects` stores the project; slugs are unique (index on `projects.slug`).
+1. `POST /api/projects` stores the project; slugs are unique (index on `projects.slug`) and a
+   duplicate is `409` with the message `That project slug is already in use`. A new project's slug
+   is 3 or 4 upper-case letters; existing slugs with digits keep working. An AI-Native project
+   needs exactly one Jira project key, checked on every `PUT /api/projects/{slug}`; an AI-Adopted
+   project may add one later if it has none. Once set, the key never changes: a different or empty
+   `jira.projectKeys` is `400` with `The Jira project key cannot be changed`.
 2. `PUT /api/repositories/{fullName}` maps a repository to one project (unique index on
-   `repositories.fullName`) and re-stamps that repository's stored payloads with the project.
+   `repositories.fullName`) and re-stamps that repository's stored payloads with the project. Its
+   SonarCloud key is set separately through `PUT /api/repositories/{fullName}/sonar-key`.
 3. Ingested payloads are stamped with the project of their repository.
 4. `jira.projectKeys` and each repository's `sonarProjectKey` drive the Jira sync and SonarCloud.
 5. Assign Entra groups: a Dashboard Admin adds role mappings (`POST /api/role-mappings`) from the
@@ -252,8 +279,8 @@ on a project gets the same `404` as a missing project.
 ### Local demo data
 
 `npm run db:seed` loads mock payloads, Jira tickets, sprint scope, PR-to-ticket links and SonarCloud
-snapshots for two projects, `FES` (ai-adopted, Jira `MMOCR`) and `CRAR` (ai-native, Jira `AGENT`). Project
-slugs are 3 or 4 upper-case letters or digits. The seed also writes role mappings for the
+snapshots for two projects, `FES` (AI-Adopted, Jira `MMOCR`) and `CRAR` (AI-Native, Jira `AGENT`). Project
+slugs are 3 or 4 upper-case letters. The seed also writes role mappings for the
 `AG-Users-CopilotAnalytics-*` group names. The Jira data covers delivered, reopened, failed and bug tickets, waiting statuses,
 linked issues, an open PR on a Done ticket and unlinked PRs. Sonar snapshots are taken at the end
 of each sprint, so a past period shows the quality gate as it stood then. `npm run db:clear` removes

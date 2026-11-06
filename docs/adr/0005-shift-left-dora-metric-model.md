@@ -153,17 +153,17 @@ To support the Delivery Quadrant, the backend requires:
    Bidirectional link mapping between Jira ticket keys and merged PRs, with proportional diff line
    attribution.
 
-### 4. AI-native projects (decisions D15, D16)
+### 4. AI-Native projects (decisions D15, D16)
 
-- **Metrics not shown for AI-native projects:** Copilot adoption, adopter count, commit and
+- **Metrics not shown for AI-Native projects:** Copilot adoption, adopter count, commit and
   line assist rates; the assist-rate donut, assist trend and contributor × repository assist
   heatmap; the persona adoption radar and adoption gauge; commit classification and
   re-classification; and Copilot Leverage v2. Adoption is close to 100% by design, so these
   carry no signal. Every other metric in the catalogue applies.
-- **AI-native Delivery Leverage is shown as four components side by side** — own-baseline
+- **AI-Native Delivery Leverage is shown as four components side by side** — own-baseline
   trend, complexity-weighted throughput, delivery quality and AI code durability — never
   combined into one number, so a weak component cannot be hidden by a strong one.
-- **AI line share is still collected** for AI-native projects. It is never shown as an
+- **AI line share is still collected** for AI-Native projects. It is never shown as an
   adoption metric; it feeds only AI code durability.
 
 ## Consequences

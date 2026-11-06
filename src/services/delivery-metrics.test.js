@@ -1,15 +1,29 @@
 const PROJECT = 'proj'
 
-const issue = (key, overrides = {}) => ({
-  key,
-  projectSlug: PROJECT,
-  status: { name: 'Done', categoryKey: 'done' },
-  created: new Date('2026-01-05T09:00:00Z'),
-  started: new Date('2026-01-06T09:00:00Z'),
-  resolved: new Date('2026-01-10T09:00:00Z'),
-  storyPoints: 3,
-  ...overrides
-})
+// Created Jan 5, started Jan 6 and Done on `resolved` (Jan 10 by default).
+const issue = (key, overrides = {}) => {
+  const resolved =
+    'resolved' in overrides
+      ? overrides.resolved
+      : new Date('2026-01-10T09:00:00Z')
+  return {
+    key,
+    projectSlug: PROJECT,
+    status: { name: 'Done', categoryKey: 'done' },
+    created: new Date('2026-01-05T09:00:00Z'),
+    resolved,
+    statusHistory: [
+      {
+        at: new Date('2026-01-06T09:00:00Z'),
+        from: 'To Do',
+        to: 'In Progress'
+      },
+      { at: resolved, from: 'In Progress', to: 'Done' }
+    ],
+    storyPoints: 3,
+    ...overrides
+  }
+}
 
 const payload = (prNumber, overrides = {}) => ({
   repository: 'DEFRA/repo',
@@ -78,14 +92,20 @@ describe('#computeDeliveryMetrics', () => {
   })
 
   test('Should report the share of delivered stories that were reopened', async () => {
-    await db
-      .collection('jira-issues')
-      .insertMany([
-        issue('P-1', { reopenCount: 2 }),
-        issue('P-2', { reopenCount: 0 }),
-        issue('P-3'),
-        issue('P-4')
-      ])
+    const day = (d) => new Date(Date.UTC(2026, 0, d, 9))
+    await db.collection('jira-issues').insertMany([
+      issue('P-1', {
+        statusHistory: [
+          { at: day(6), from: 'To Do', to: 'In Progress' },
+          { at: day(8), from: 'In Progress', to: 'Done' },
+          { at: day(9), from: 'Done', to: 'In Progress' },
+          { at: day(10), from: 'In Progress', to: 'Done' }
+        ]
+      }),
+      issue('P-2'),
+      issue('P-3'),
+      issue('P-4')
+    ])
 
     const result = await computeDeliveryMetrics(db, PROJECT)
 
@@ -127,6 +147,148 @@ describe('#computeDeliveryMetrics', () => {
       firstScanPassRate: 0,
       standardDeployableUnits: 0,
       warnings: []
+    })
+  })
+
+  describe('Jira workflow mapping', () => {
+    const at = (day) => new Date(Date.UTC(2026, 0, day, 9))
+    const moves = (...steps) =>
+      steps.slice(1).map(([day, to], i) => ({
+        at: at(day),
+        from: steps[i][1],
+        to
+      }))
+    const saveMapping = (stages) =>
+      db.collection('projects').updateOne(
+        { slug: PROJECT },
+        {
+          $set: {
+            'jira.statusMapping': {
+              version: 2,
+              stages: Object.entries(stages).map(([id, statuses]) => ({
+                id,
+                statuses
+              }))
+            }
+          }
+        }
+      )
+    const window = { from: '2026-01-01T00:00:00Z', to: '2026-02-01T00:00:00Z' }
+
+    beforeEach(async () => {
+      await db.collection('projects').deleteMany({})
+      await db
+        .collection('projects')
+        .insertOne({ slug: PROJECT, jira: { projectKeys: ['PROJ'] } })
+    })
+
+    test('Should deliver a story moved into a mapped Done status without a resolution', async () => {
+      await saveMapping({
+        todo: ['To Do'],
+        'in-progress': ['In Progress'],
+        done: ['Completed']
+      })
+      await db.collection('jira-issues').insertOne(
+        issue('P-1', {
+          status: { name: 'Completed', categoryKey: 'indeterminate' },
+          resolved: null,
+          created: at(1),
+          statusHistory: moves(
+            [1, 'To Do'],
+            [3, 'In Progress'],
+            [7, 'Completed']
+          )
+        })
+      )
+
+      const result = await computeDeliveryMetrics(db, PROJECT, window)
+
+      expect(result.storiesDelivered).toBe(1)
+      expect(result.cycleTimeDays).toBe(4)
+      expect(result.leadTimeToDoneDays).toBe(6)
+      expect(result.workflow).toEqual({
+        source: 'project',
+        version: 2,
+        unmappedStatuses: []
+      })
+    })
+
+    test('Should start the clock on leaving a custom To Do status', async () => {
+      await saveMapping({
+        todo: ['Selected'],
+        'in-progress': ['Building'],
+        done: ['Done']
+      })
+      await db.collection('jira-issues').insertOne(
+        issue('P-1', {
+          created: at(1),
+          statusHistory: moves([1, 'Selected'], [5, 'Building'], [6, 'Done'])
+        })
+      )
+
+      const result = await computeDeliveryMetrics(db, PROJECT, window)
+
+      expect(result.cycleTimeDays).toBe(1)
+    })
+
+    test('Should not deliver a cancelled story', async () => {
+      await db
+        .collection('jira-issues')
+        .insertMany([
+          issue('P-1'),
+          issue('P-2', { status: { name: 'Cancelled', categoryKey: 'done' } })
+        ])
+
+      const result = await computeDeliveryMetrics(db, PROJECT, window)
+
+      expect(result.storiesDelivered).toBe(1)
+      expect(result.workflow.source).toBe('default')
+    })
+
+    test('Should apply statuses detected from Jira with no admin action', async () => {
+      await db.collection('projects').updateOne(
+        { slug: PROJECT },
+        {
+          $set: {
+            'jira.detectedStatuses': [
+              { name: 'Funnel', categoryKey: 'new' },
+              { name: 'Cooking', categoryKey: 'indeterminate' },
+              { name: 'Served', categoryKey: 'done' }
+            ]
+          }
+        }
+      )
+      await db.collection('jira-issues').insertOne(
+        issue('P-1', {
+          status: { name: 'Served', categoryKey: '' },
+          created: at(1),
+          statusHistory: moves([1, 'Funnel'], [4, 'Cooking'], [6, 'Served'])
+        })
+      )
+
+      const result = await computeDeliveryMetrics(db, PROJECT, window)
+
+      expect(result.workflow.source).toBe('detected')
+      expect(result.storiesDelivered).toBe(1)
+      expect(result.cycleTimeDays).toBe(2)
+    })
+
+    test('Should list statuses outside every stage with their issue counts', async () => {
+      await db.collection('jira-issues').insertMany([
+        issue('P-1', {
+          statusHistory: moves([1, 'To Do'], [2, 'Funnel'], [4, 'Done'])
+        }),
+        issue('P-2', {
+          status: { name: 'Funnel', categoryKey: '' },
+          statusHistory: moves([1, 'To Do'], [2, 'Funnel'])
+        })
+      ])
+
+      const result = await computeDeliveryMetrics(db, PROJECT)
+
+      expect(result.workflow.unmappedStatuses).toEqual([
+        { name: 'Funnel', issues: 2 }
+      ])
     })
   })
 

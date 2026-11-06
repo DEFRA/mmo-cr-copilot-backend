@@ -11,9 +11,9 @@ productivity gain. DORA warns against comparing work of very different size or c
 
 Two project types need different answers:
 
-- **AI-adopted** projects have a pre-Copilot history. A 6-month backfill gives a baseline, but
+- **AI-Adopted** projects have a pre-Copilot history. A 6-month backfill gives a baseline, but
   current PRs must only be compared with equivalent historic PRs.
-- **AI-native** projects have no pre-AI history, and adoption is close to 100% by design, so a
+- **AI-Native** projects have no pre-AI history, and adoption is close to 100% by design, so a
   before-and-after comparison is meaningless.
 
 Size evidence: Google's engineering practices treat about 100 changed lines as reasonable and about
@@ -38,7 +38,7 @@ change creates a new model version.
 - The model version is stored on every score, so scores can be recomputed. Each change to caps or
   weights creates a new version.
 
-**Copilot Leverage v2 (AI-adopted only):**
+**Copilot Leverage v2 (AI-Adopted only):**
 
 - Baseline = PRs merged before the project's `adoptionStartDate`; adopted = after.
 - Compare within each band on median PR cycle time, review wait, PR rework ratio and new SonarCloud
@@ -46,7 +46,7 @@ change creates a new model version.
 - Combine bands by **direct standardisation** on the current period's band mix.
 - A band needs at least 5 PRs on each side; otherwise show "Not enough comparable pull requests".
 
-**AI-native Delivery Leverage:**
+**AI-Native Delivery Leverage:**
 
 - Own-baseline trend: the project's first N completed sprints (default 3) form its baseline, compared
   with the same band standardisation.
@@ -68,7 +68,7 @@ change creates a new model version.
 
 - **Keep the current index** — not like-for-like and has no adoption date.
 - **Lines changed alone** — ignores spread across files and modules.
-- **Compare AI-native projects with AI-adopted baselines** — different applications; at most an
+- **Compare AI-Native projects with AI-Adopted baselines** — different applications; at most an
   indicative portfolio reference.
 
 ## Open points
@@ -76,9 +76,9 @@ change creates a new model version.
 Resolved:
 
 - v1 caps accepted as the per-project defaults (`DEFAULT_COMPLEXITY_MODEL`).
-- AI-native Delivery Leverage is shown as 4 components side by side (ADR 0005 §4).
-- AI-native own baseline: the first 3 sprints of activity; 5 PRs needed on each side.
-- The AI-native method is recorded in ADR 0005 rather than a separate ADR.
+- AI-Native Delivery Leverage is shown as 4 components side by side (ADR 0005 §4).
+- AI-Native own baseline: the first 3 sprints of activity; 5 PRs needed on each side.
+- The AI-Native method is recorded in ADR 0005 rather than a separate ADR.
 
 Still open:
 

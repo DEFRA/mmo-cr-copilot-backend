@@ -141,7 +141,7 @@ describe('#mock data fixtures', () => {
       expect(result.deliveryReworkRate).toBeGreaterThan(0)
     })
 
-    test('Should cover the AI-native project as well', async () => {
+    test('Should cover the AI-Native project as well', async () => {
       const s7 = await computeDeliveryMetrics(
         db,
         'CRAR',

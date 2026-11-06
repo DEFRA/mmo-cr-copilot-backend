@@ -121,6 +121,7 @@ async function createIndexes(db, logger) {
     .collection('repositories')
     .createIndex({ fullName: 1 }, { unique: true })
   await db.collection('repositories').createIndex({ projectSlug: 1 })
+  await createSonarKeyIndex(db, logger)
   await db
     .collection(PAYLOADS_COLLECTION)
     .createIndex({ projectSlug: 1, calculatedAt: -1 })
@@ -164,6 +165,29 @@ async function createIndexes(db, logger) {
     groupName: config.get('auth.bootstrapAdminGroup'),
     logger
   })
+}
+
+// One SonarCloud project per repository; unset keys are outside the index. Existing
+// duplicates must not stop start-up: the route pre-check still blocks new ones.
+export async function createSonarKeyIndex(db, logger) {
+  try {
+    await db.collection('repositories').createIndex(
+      { sonarProjectKey: 1 },
+      {
+        name: 'sonarProjectKey_unique',
+        unique: true,
+        partialFilterExpression: {
+          sonarProjectKey: { $type: 'string', $gt: '' }
+        }
+      }
+    )
+  } catch (error) {
+    if (error?.code !== 11000) throw error
+    logger?.warn(
+      { error: { code: error.code } },
+      'Could not create unique index on repository SonarCloud keys; resolve duplicate keys'
+    )
+  }
 }
 
 /**

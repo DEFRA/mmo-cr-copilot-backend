@@ -11,8 +11,10 @@ import {
 } from '#/common/helpers/project-access.js'
 import {
   repositoryFullNameParamSchema,
-  repositoryMapSchema
+  repositoryMapSchema,
+  repositorySonarKeySchema
 } from '#/schemas/project.js'
+import { AUDIT_ACTIONS, AUDIT_ENTITIES } from '#/schemas/audit-log.js'
 import { recordAuditEvent } from '#/services/audit-logs.js'
 import {
   findProject,
@@ -21,6 +23,8 @@ import {
   listProjects,
   listRepositories,
   mapRepository,
+  normaliseSonarKey,
+  setRepositorySonarKey,
   unmapRepository
 } from '#/services/projects.js'
 
@@ -38,7 +42,7 @@ async function auditMapping(request, user, action, repository, before, after) {
     request.db,
     {
       action,
-      entity: 'repository-mapping',
+      entity: AUDIT_ENTITIES.repositoryMapping,
       entityId: repository,
       projectSlug,
       summary: `Repository ${repository}: ${action.replace('repository.', '')}`,
@@ -54,6 +58,28 @@ async function auditMapping(request, user, action, repository, before, after) {
     },
     request.logger
   )
+}
+
+function sonarKeyAction(before, after) {
+  if (!before) return AUDIT_ACTIONS.repositorySonarKeySet
+  if (!after) return AUDIT_ACTIONS.repositorySonarKeyCleared
+  return AUDIT_ACTIONS.repositorySonarKeyUpdated
+}
+
+// Project admin of the repository's own project, or a dashboard admin. Unmapped or
+// unknown repositories are 404 to everyone else, as are other projects' repositories.
+async function assertRepositoryAdmin(request, repository) {
+  const project = repository?.projectSlug
+    ? await activeProject(request.db, repository.projectSlug)
+    : null
+  if (project) {
+    return assertProjectRole(request, project, PROJECT_ROLES.admin).user
+  }
+  const user = requireUser(request)
+  if (!repository || !isDashboardAdmin(user)) {
+    throw Boom.notFound(`Repository '${request.params.fullName}' not found`)
+  }
+  return user
 }
 
 export const repositoriesRoutes = [
@@ -122,7 +148,7 @@ export const repositoriesRoutes = [
     },
     handler: async (request, h) => {
       const { fullName } = request.params
-      const { projectSlug, sonarProjectKey } = request.payload
+      const { projectSlug } = request.payload
 
       const project = await activeProject(request.db, projectSlug)
       if (!project) {
@@ -142,7 +168,6 @@ export const repositoriesRoutes = [
       const repository = await mapRepository(request.db, {
         fullName,
         projectSlug,
-        sonarProjectKey,
         mappedBy: user.name || user.oid
       })
       await auditMapping(
@@ -154,6 +179,43 @@ export const repositoriesRoutes = [
         repository
       )
 
+      return h.response(repository)
+    }
+  },
+  {
+    method: 'PUT',
+    path: '/api/repositories/{fullName}/sonar-key',
+    options: {
+      validate: {
+        params: repositoryFullNameParamSchema,
+        payload: repositorySonarKeySchema
+      }
+    },
+    handler: async (request, h) => {
+      const { fullName } = request.params
+      const existing = await findRepository(request.db, fullName)
+      const user = await assertRepositoryAdmin(request, existing)
+
+      const before = normaliseSonarKey(existing.sonarProjectKey) ?? null
+      const repository = await setRepositorySonarKey(
+        request.db,
+        fullName,
+        request.payload.sonarProjectKey
+      )
+      if (!repository) {
+        throw Boom.notFound(`Repository '${fullName}' not found`)
+      }
+      const after = repository.sonarProjectKey
+      if (before !== after) {
+        await auditMapping(
+          request,
+          user,
+          sonarKeyAction(before, after),
+          fullName,
+          existing,
+          repository
+        )
+      }
       return h.response(repository)
     }
   },

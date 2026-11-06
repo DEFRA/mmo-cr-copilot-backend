@@ -1,7 +1,32 @@
 import Joi from 'joi'
 
-// Project slug: three or four uppercase letters or digits, starting with a letter (e.g. CRAR, FES).
+// Any stored slug: 3–4 upper-case letters or digits starting with a letter, so legacy digit slugs still resolve.
 export const PROJECT_SLUG_PATTERN = /^[A-Z][A-Z0-9]{2,3}$/
+// New projects only: 3–4 upper-case letters (ADR 0010).
+export const PROJECT_SLUG_CREATE_PATTERN = /^[A-Z]{3,4}$/
+
+export const JIRA_PROJECT_KEY_PATTERN = /^[A-Z][A-Z0-9_]+$/
+export const SONAR_PROJECT_KEY_PATTERN = /^[\w.:-]+$/
+
+export const AI_NATIVE_JIRA_KEY_MESSAGE =
+  'AI-Native projects require exactly one Jira project key'
+export const JIRA_KEY_FIXED_MESSAGE = 'The Jira project key cannot be changed'
+
+// Trimmed; '' and null both mean "no key" and are stored as null.
+const sonarProjectKey = Joi.string()
+  .trim()
+  .max(255)
+  .pattern(SONAR_PROJECT_KEY_PATTERN)
+  .allow('', null)
+
+const jiraProjectKeys = Joi.array()
+  .items(Joi.string().pattern(JIRA_PROJECT_KEY_PATTERN))
+  .max(1)
+
+/** True unless the project is AI-Native without exactly one Jira project key. */
+export function hasRequiredJiraKey({ type, jira } = {}) {
+  return type !== 'ai-native' || jira?.projectKeys?.length === 1
+}
 
 const weight = Joi.number().min(0).max(1).required()
 
@@ -22,7 +47,7 @@ export const complexityModelSchema = Joi.object({
 }).options({ stripUnknown: true })
 
 export const projectCreateSchema = Joi.object({
-  slug: Joi.string().pattern(PROJECT_SLUG_PATTERN).min(3).max(4).required(),
+  slug: Joi.string().pattern(PROJECT_SLUG_CREATE_PATTERN).required(),
   name: Joi.string().min(1).max(200).required(),
   type: Joi.string().valid('ai-adopted', 'ai-native').required(),
   adoptionStartDate: Joi.date().iso().optional(),
@@ -31,13 +56,9 @@ export const projectCreateSchema = Joi.object({
     anchorDate: Joi.date().iso().default('2026-07-08T00:00:00.000Z')
   }).default(),
   jira: Joi.object({
-    projectKeys: Joi.array()
-      .items(Joi.string().pattern(/^[A-Z][A-Z0-9_]+$/))
-      .max(20)
-      .default([]),
+    projectKeys: jiraProjectKeys.default([]),
     storyPointsField: Joi.string().default('customfield_10016'),
-    boardId: Joi.number().integer().positive().optional(),
-    waitingStatuses: Joi.array().items(Joi.string().max(60)).max(30).optional()
+    boardId: Joi.number().integer().positive().optional()
   }).default()
 }).options({ stripUnknown: true })
 
@@ -50,20 +71,21 @@ export const projectUpdateSchema = Joi.object({
     cadenceDays: Joi.number().integer().min(1).max(30).default(14),
     anchorDate: Joi.date().iso().default('2026-07-08T00:00:00.000Z')
   }).optional(),
+  // No defaults: an omitted field must leave the stored value alone.
   jira: Joi.object({
-    projectKeys: Joi.array()
-      .items(Joi.string().pattern(/^[A-Z][A-Z0-9_]+$/))
-      .max(20)
-      .default([]),
-    storyPointsField: Joi.string().default('customfield_10016'),
-    boardId: Joi.number().integer().positive().optional(),
-    waitingStatuses: Joi.array().items(Joi.string().max(60)).max(30).optional()
+    projectKeys: jiraProjectKeys.optional(),
+    storyPointsField: Joi.string().optional(),
+    boardId: Joi.number().integer().positive().optional()
   }).optional()
 }).options({ stripUnknown: true })
 
+// The SonarCloud key is set only through the sonar-key route.
 export const repositoryMapSchema = Joi.object({
-  projectSlug: Joi.string().required(),
-  sonarProjectKey: Joi.string().allow('', null).optional()
+  projectSlug: Joi.string().pattern(PROJECT_SLUG_PATTERN).required()
+}).options({ stripUnknown: true })
+
+export const repositorySonarKeySchema = Joi.object({
+  sonarProjectKey: sonarProjectKey.required()
 }).options({ stripUnknown: true })
 
 export const projectSlugParamSchema = Joi.object({

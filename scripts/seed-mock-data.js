@@ -1091,7 +1091,7 @@ const PAYLOAD_SPECS = [
     ]
   },
 
-  // --- AI-NATIVE PROJECT: CRAR ---
+  // --- AI-Native project: CRAR ---
   {
     schemaVersion: 2,
     source: 'live',
@@ -1544,7 +1544,7 @@ async function seedData() {
     const payloadDocs = specs.map(createPayloadDoc)
     await db.collection('payloads').insertMany(payloadDocs)
     console.log(
-      `  Inserted ${payloadDocs.length} analytics payloads across historical baseline, previous sprints, live sprint, AI-native, and unassigned:`
+      `  Inserted ${payloadDocs.length} analytics payloads across historical baseline, previous sprints, live sprint, AI-Native, and unassigned:`
     )
     for (const p of payloadDocs) {
       console.log(
@@ -1593,9 +1593,9 @@ async function seedData() {
       '================================================================'
     )
     console.log('Covered Scenarios:')
-    console.log('  1. AI-adopted project (MMO Catch Recording) with baseline')
+    console.log('  1. AI-Adopted project (MMO Catch Recording) with baseline')
     console.log(
-      '  2. AI-native project (MMO Agentic Delivery) with delivery quadrant'
+      '  2. AI-Native project (MMO Agentic Delivery) with delivery quadrant'
     )
     console.log('  3. Multi-sprint time travel (Live + Sprints 7, 6, 5)')
     console.log('  4. Complexity scoring (XS to XL bands) & Leverage v2')

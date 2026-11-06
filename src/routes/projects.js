@@ -10,7 +10,10 @@ import {
   resolveProjectRole
 } from '#/common/helpers/project-access.js'
 import {
+  AI_NATIVE_JIRA_KEY_MESSAGE,
+  JIRA_KEY_FIXED_MESSAGE,
   complexityModelSchema,
+  hasRequiredJiraKey,
   prLinkParamSchema,
   prLinkPayloadSchema,
   projectCreateSchema,
@@ -21,6 +24,7 @@ import {
   projectUpdateSchema
 } from '#/schemas/project.js'
 import {
+  PROJECT_SLUG_CONFLICT_MESSAGE,
   createProject,
   deleteProject,
   findProject,
@@ -29,7 +33,8 @@ import {
   listProjects,
   updateProject
 } from '#/services/projects.js'
-import { createJiraClient, listProjectJiraIssues } from '#/services/jira.js'
+import { listProjectJiraIssues } from '#/services/jira.js'
+import { syncOneProject } from '#/services/jira-project-sync.js'
 import { findPrLinks, setManualPrLinks } from '#/services/pr-jira-links.js'
 import { recordAuditEvent } from '#/services/audit-logs.js'
 import {
@@ -79,6 +84,29 @@ async function readableProject(request) {
 }
 
 const presentProject = (project, role) => ({ ...project, role })
+
+const sameKeys = (a, b) =>
+  a.length === b.length && a.every((key, i) => key === b[i])
+
+// A set Jira key never changes; the type rule is checked against the project as it will be stored.
+function assertJiraKeyRule(existing, changes) {
+  const storedKeys = existing?.jira?.projectKeys ?? []
+  const requestedKeys = changes.jira?.projectKeys
+  if (
+    storedKeys.length > 0 &&
+    requestedKeys !== undefined &&
+    !sameKeys(storedKeys, requestedKeys)
+  ) {
+    throw Boom.badRequest(JIRA_KEY_FIXED_MESSAGE)
+  }
+  const resulting = {
+    type: changes.type ?? existing?.type,
+    jira: { projectKeys: requestedKeys ?? storedKeys }
+  }
+  if (!hasRequiredJiraKey(resulting)) {
+    throw Boom.badRequest(AI_NATIVE_JIRA_KEY_MESSAGE)
+  }
+}
 
 export const projectsRoutes = [
   {
@@ -173,10 +201,9 @@ export const projectsRoutes = [
       const { user } = requireDashboardAdmin(request)
       const existing = await findProject(request.db, request.payload.slug)
       if (existing) {
-        throw Boom.conflict(
-          `Project with slug '${request.payload.slug}' already exists`
-        )
+        throw Boom.conflict(PROJECT_SLUG_CONFLICT_MESSAGE)
       }
+      assertJiraKeyRule(null, request.payload)
       const project = await createProject(request.db, request.payload)
       invalidateRoleCache()
       await auditProject(request, user, 'project.created', project, null)
@@ -211,6 +238,7 @@ export const projectsRoutes = [
       if (!existing || existing.archivedAt) {
         throw Boom.notFound(`Project '${request.params.slug}' not found`)
       }
+      assertJiraKeyRule(existing, request.payload)
       const project = await updateProject(
         request.db,
         request.params.slug,
@@ -334,7 +362,8 @@ export const projectsRoutes = [
       assertProjectRole(request, project)
       const issues = await listProjectJiraIssues(
         request.db,
-        request.params.slug
+        request.params.slug,
+        project
       )
       return h.response({ issues })
     }
@@ -353,13 +382,14 @@ export const projectsRoutes = [
       if (!project || project.archivedAt) {
         throw Boom.notFound(`Project '${request.params.slug}' not found`)
       }
-      const client = createJiraClient({ logger: request.logger })
-      const result = await client.syncProjectIssues(
-        request.db,
-        project.slug,
-        project.jira?.projectKeys,
-        project.jira?.storyPointsField
-      )
+      // A manual sync is full, so it also repairs histories stored before a fix.
+      const result = await syncOneProject({
+        db: request.db,
+        client: request.server.jira,
+        project,
+        logger: request.logger,
+        full: true
+      })
       return h.response(result)
     }
   },

@@ -1,3 +1,5 @@
+import { Collection } from 'mongodb'
+
 import {
   grantAccess,
   ADMIN,
@@ -161,15 +163,13 @@ describe('#repositories routes', () => {
   describe('PUT /api/repositories/{fullName}', () => {
     test('Should let a project admin map an unassigned repository to their project', async () => {
       const { statusCode, result } = await put('DEFRA/loose', projectAdmin, {
-        projectSlug: 'MINE',
-        sonarProjectKey: 'DEFRA_loose'
+        projectSlug: 'MINE'
       })
 
       expect(statusCode).toBe(200)
       expect(result).toMatchObject({
         fullName: 'DEFRA/loose',
-        projectSlug: 'MINE',
-        sonarProjectKey: 'DEFRA_loose'
+        projectSlug: 'MINE'
       })
       const payload = await db
         .collection('payloads')
@@ -185,13 +185,29 @@ describe('#repositories routes', () => {
       })
     })
 
-    test('Should let a project admin change the Sonar key of their own repository', async () => {
-      const { statusCode } = await put('DEFRA/mine', projectAdmin, {
+    test.each([
+      ['a valid key', 'DEFRA_mine'],
+      ['an invalid key', 'has space'],
+      ['a key in use elsewhere', 'DEFRA_shared']
+    ])('Should ignore %s sent with a mapping', async (_, sonarProjectKey) => {
+      await db
+        .collection('repositories')
+        .updateOne(
+          { fullName: 'DEFRA/theirs' },
+          { $set: { sonarProjectKey: 'DEFRA_shared' } }
+        )
+
+      const { statusCode, result } = await put('DEFRA/mine', projectAdmin, {
         projectSlug: 'MINE',
-        sonarProjectKey: 'DEFRA_mine'
+        sonarProjectKey
       })
 
       expect(statusCode).toBe(200)
+      expect(result.sonarProjectKey).toBeUndefined()
+      const stored = await db
+        .collection('repositories')
+        .findOne({ fullName: 'DEFRA/mine' })
+      expect(stored.sonarProjectKey).toBeUndefined()
     })
 
     test('Should not let a project admin map into a project they do not administer', async () => {
@@ -236,6 +252,213 @@ describe('#repositories routes', () => {
       })
 
       expect(statusCode).toBe(400)
+    })
+
+    test('Should keep the Sonar key when a repository is moved to another project', async () => {
+      await db
+        .collection('repositories')
+        .updateOne(
+          { fullName: 'DEFRA/theirs' },
+          { $set: { sonarProjectKey: 'DEFRA_theirs' } }
+        )
+
+      const { statusCode, result } = await put('DEFRA/theirs', admin, {
+        projectSlug: 'MINE',
+        sonarProjectKey: null
+      })
+
+      expect(statusCode).toBe(200)
+      expect(result).toMatchObject({
+        projectSlug: 'MINE',
+        sonarProjectKey: 'DEFRA_theirs'
+      })
+      const audit = await db
+        .collection('audit-logs')
+        .findOne({ action: 'repository.remapped' })
+      expect(audit.after.sonarProjectKey).toBe('DEFRA_theirs')
+    })
+  })
+
+  describe('PUT /api/repositories/{fullName}/sonar-key', () => {
+    const setKey = (fullName, headers, sonarProjectKey) =>
+      server.inject({
+        method: 'PUT',
+        url: `/api/repositories/${encodeURIComponent(fullName)}/sonar-key`,
+        headers,
+        payload: { sonarProjectKey }
+      })
+    const stored = (fullName) =>
+      db.collection('repositories').findOne({ fullName })
+    const auditActions = async () =>
+      (
+        await db
+          .collection('audit-logs')
+          .find({ action: /^repository\.sonar-key/ })
+          .sort({ occurredAt: 1 })
+          .toArray()
+      ).map((event) => event.action)
+
+    beforeEach(async () => {
+      await db
+        .collection('repositories')
+        .insertOne({ fullName: 'DEFRA/orphan', projectSlug: null })
+    })
+
+    test('Should let a project admin set a key on their own repository', async () => {
+      const { statusCode, result } = await setKey(
+        'DEFRA/mine',
+        projectAdmin,
+        'DEFRA_mine'
+      )
+
+      expect(statusCode).toBe(200)
+      expect(result).toEqual({
+        fullName: 'DEFRA/mine',
+        projectSlug: 'MINE',
+        sonarProjectKey: 'DEFRA_mine'
+      })
+      const audit = await db
+        .collection('audit-logs')
+        .findOne({ action: 'repository.sonar-key.set' })
+      expect(audit).toMatchObject({
+        entity: 'repository-mapping',
+        entityId: 'DEFRA/mine',
+        projectSlug: 'MINE',
+        before: { projectSlug: 'MINE', sonarProjectKey: null },
+        after: { projectSlug: 'MINE', sonarProjectKey: 'DEFRA_mine' },
+        actor: { oid: PROJECT_ADMIN.oid }
+      })
+    })
+
+    test('Should audit set, updated and cleared, and skip an unchanged key', async () => {
+      await setKey('DEFRA/mine', admin, 'A')
+      await setKey('DEFRA/mine', admin, 'B')
+      await setKey('DEFRA/mine', admin, 'B')
+      const cleared = await setKey('DEFRA/mine', admin, null)
+
+      expect(cleared.statusCode).toBe(200)
+      expect((await stored('DEFRA/mine')).sonarProjectKey).toBeNull()
+      expect(await auditActions()).toEqual([
+        'repository.sonar-key.set',
+        'repository.sonar-key.updated',
+        'repository.sonar-key.cleared'
+      ])
+    })
+
+    test('Should clear the key when sent an empty string', async () => {
+      await setKey('DEFRA/mine', admin, 'A')
+
+      const { result } = await setKey('DEFRA/mine', admin, '')
+
+      expect(result.sonarProjectKey).toBeNull()
+    })
+
+    test('Should let a dashboard admin set a key on any repository', async () => {
+      const theirs = await setKey('DEFRA/theirs', admin, 'DEFRA_theirs')
+      const orphan = await setKey('DEFRA/orphan', admin, 'DEFRA_orphan')
+
+      expect(theirs.statusCode).toBe(200)
+      expect(orphan.statusCode).toBe(200)
+      expect((await stored('DEFRA/orphan')).sonarProjectKey).toBe(
+        'DEFRA_orphan'
+      )
+    })
+
+    test.each([
+      ['a project admin of another project', () => projectAdmin, 404],
+      ['a project user', () => projectUser, 403],
+      ['an outsider', () => outsider, 404]
+    ])(
+      'Should refuse %s on a project repository',
+      async (_, headers, status) => {
+        const repository = status === 403 ? 'DEFRA/mine' : 'DEFRA/theirs'
+
+        const { statusCode } = await setKey(repository, headers(), 'NOPE')
+
+        expect(statusCode).toBe(status)
+        expect((await stored(repository)).sonarProjectKey).toBeUndefined()
+      }
+    )
+
+    test('Should hide a repository without a project from everyone but dashboard admins', async () => {
+      const asProjectAdmin = await setKey('DEFRA/orphan', projectAdmin, 'K')
+      const asOutsider = await setKey('DEFRA/orphan', outsider, 'K')
+
+      expect(asProjectAdmin.statusCode).toBe(404)
+      expect(asOutsider.statusCode).toBe(404)
+    })
+
+    test('Should return 404 for an unknown repository', async () => {
+      const asAdmin = await setKey('DEFRA/unknown', admin, 'K')
+      const asProjectAdmin = await setKey('DEFRA/unknown', projectAdmin, 'K')
+
+      expect(asAdmin.statusCode).toBe(404)
+      expect(asProjectAdmin.statusCode).toBe(404)
+      await expect(
+        db.collection('repositories').countDocuments({
+          fullName: 'DEFRA/unknown'
+        })
+      ).resolves.toBe(0)
+    })
+
+    test('Should return 404 when the repository is removed during the request', async () => {
+      vi.spyOn(Collection.prototype, 'findOneAndUpdate').mockResolvedValueOnce(
+        null
+      )
+
+      const { statusCode } = await setKey('DEFRA/mine', admin, 'K')
+
+      vi.restoreAllMocks()
+      expect(statusCode).toBe(404)
+      expect(await auditActions()).toEqual([])
+    })
+
+    test('Should reject a request without a token', async () => {
+      const { statusCode } = await setKey('DEFRA/mine', {}, 'K')
+
+      expect(statusCode).toBe(401)
+    })
+
+    test('Should return 409 for a key linked to another repository', async () => {
+      await setKey('DEFRA/theirs', admin, 'DEFRA_shared')
+
+      const { statusCode, result } = await setKey(
+        'DEFRA/mine',
+        projectAdmin,
+        'DEFRA_shared'
+      )
+
+      expect(statusCode).toBe(409)
+      expect(result).toEqual({
+        statusCode: 409,
+        error: 'Conflict',
+        message: 'That SonarCloud project key is already in use'
+      })
+      expect((await stored('DEFRA/mine')).sonarProjectKey).toBeUndefined()
+    })
+
+    test.each([
+      ['a missing key', {}],
+      ['an invalid key', { sonarProjectKey: 'has space' }],
+      ['a non-string key', { sonarProjectKey: 42 }]
+    ])('Should reject %s', async (_, payload) => {
+      const { statusCode, result } = await server.inject({
+        method: 'PUT',
+        url: '/api/repositories/DEFRA%2Fmine/sonar-key',
+        headers: admin,
+        payload
+      })
+
+      expect(statusCode).toBe(400)
+      expect(result.message).toBe('Invalid request input')
+    })
+
+    test('Should not call any external service', async () => {
+      fetchMock.resetMocks()
+
+      await setKey('DEFRA/mine', admin, 'DEFRA_mine')
+
+      expect(fetchMock).not.toHaveBeenCalled()
     })
   })
 

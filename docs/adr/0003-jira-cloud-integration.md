@@ -69,6 +69,7 @@ Findings that shape the integration:
 
 - The Jira site URL, and whether a service account with a scoped API token can be created.
 - Which non-Done statuses count as active or waiting, per project, for flow efficiency.
+  Resolved by [0011](0011-jira-workflow-status-mapping.md).
 - Whether sprints always come from Jira boards or a fixed cadence per project.
 - Sync interval and the rate-limit budget per project.
 - Retention for Jira snapshots, pending the data protection (DPIA) outcome.
