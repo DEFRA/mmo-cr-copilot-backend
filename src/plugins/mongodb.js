@@ -10,6 +10,9 @@ import {
   ensureBootstrapAdmin
 } from '#/services/role-mappings.js'
 import { SURVIVAL_COLLECTION } from '#/services/survival.js'
+import { renameDefaultProjectSlug } from '#/plugins/rename-default-project-slug.js'
+
+const DEFAULT_PROJECT_SLUG = 'CRAR'
 
 export const mongoDb = {
   plugin: {
@@ -160,6 +163,7 @@ async function createIndexes(db, logger) {
     )
 
   await migrateDefaultProject(db, logger)
+  await renameDefaultProjectSlug(db, logger)
   await removeProjectGroupFields(db, logger)
   await ensureBootstrapAdmin(db, {
     groupName: config.get('auth.bootstrapAdminGroup'),
@@ -236,7 +240,7 @@ export async function migrateDefaultProject(db, logger) {
   const projectCount = await db.collection('projects').countDocuments()
   if (projectCount === 0) {
     await db.collection('projects').insertOne({
-      slug: 'FES',
+      slug: DEFAULT_PROJECT_SLUG,
       name: 'MMO Catch Recording',
       type: 'ai-adopted',
       adoptionStartDate: new Date('2026-01-01T00:00:00.000Z'),
@@ -263,7 +267,7 @@ export async function migrateDefaultProject(db, logger) {
         {
           $set: {
             fullName,
-            projectSlug: 'FES',
+            projectSlug: DEFAULT_PROJECT_SLUG,
             mappedAt: now
           }
         },
@@ -275,7 +279,7 @@ export async function migrateDefaultProject(db, logger) {
       .collection(PAYLOADS_COLLECTION)
       .updateMany(
         { projectSlug: { $in: [null, undefined] } },
-        { $set: { projectSlug: 'FES' } }
+        { $set: { projectSlug: DEFAULT_PROJECT_SLUG } }
       )
 
     logger?.info('Migrated default project and repository mappings')

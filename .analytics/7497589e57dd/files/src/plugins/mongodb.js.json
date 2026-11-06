@@ -1,0 +1,25 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/plugins/mongodb.js",
+  "added": 6,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 6,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "13,15,166,243,270,282"
+  },
+  "ai": [
+    [13, "a", "0edb05f0", 0],
+    [15, "a", "cd123bfc", 0],
+    [166, "a", "25757d67", 0],
+    [243, "a", "624efff0", 0],
+    [270, "a", "40fef79e", 0],
+    [282, "a", "b6fddd65", 0]
+  ]
+}

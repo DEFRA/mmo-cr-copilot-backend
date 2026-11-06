@@ -302,5 +302,14 @@ describe('#mongoDb', () => {
       expect(project).not.toHaveProperty('adminGroupIds')
       expect(project).not.toHaveProperty('entraGroupIds')
     })
+
+    test('Should create the default project as CRAR on an empty database', async () => {
+      await db.collection('projects').deleteMany({})
+
+      await migrations.migrateDefaultProject(db)
+
+      const projects = await db.collection('projects').find().toArray()
+      expect(projects.map((p) => p.slug)).toEqual(['CRAR'])
+    })
   })
 })
