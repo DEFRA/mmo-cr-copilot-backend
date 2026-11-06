@@ -136,7 +136,7 @@ describe('#persona-mappings routes', () => {
     })
 
     test('Should reject an invalid GitHub handle', async () => {
-      const { statusCode } = await put('-invalid', 'qa', projectAdmin)
+      const { statusCode } = await put('a%5Cb', 'qa', projectAdmin)
 
       expect(statusCode).toBe(400)
     })

@@ -6,16 +6,16 @@ import Joi from 'joi'
  * this is operator-entered configuration, not analytics data.
  */
 
-// Mirrors GitHub's own username rules: alphanumeric, single hyphens, no
-// leading/trailing hyphen, max 39 characters.
-const GITHUB_HANDLE_PATTERN = /^[a-zA-Z\d](?:[a-zA-Z\d]|-(?=[a-zA-Z\d])){0,38}$/
+// The git config author name, so free text; it is a URL path segment, hence no slashes or dot segments.
+const GITHUB_HANDLE_PATTERN = /^(?!\.{1,2}$)(?!\s)(?!.*\s$)[^/\\\p{Cc}]+$/u
 
 export const PERSONAS = ['developer', 'devops', 'qa']
 
 export const githubHandleParamSchema = Joi.object({
   githubHandle: Joi.string()
+    .max(100)
     .pattern(GITHUB_HANDLE_PATTERN)
-    .message('{{#label}} must be a valid GitHub handle')
+    .message('{{#label}} must not contain slashes or be a dot segment')
     .required()
 })
 

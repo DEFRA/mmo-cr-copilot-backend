@@ -1,0 +1,36 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/common/helpers/project-access.js",
+  "added": 17,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 17,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "123-124,126-131,135,140-147"
+  },
+  "ai": [
+    [123, "a", "110b5fae", 0],
+    [124, "a", "9845a6a3", 0],
+    [126, "a", "42793bf7", 0],
+    [127, "a", "a8a2c448", 0],
+    [128, "a", "31289fea", 0],
+    [129, "a", "94ab25ad", 0],
+    [130, "a", "843d7fea", 0],
+    [131, "a", "816bf6ec", 0],
+    [135, "a", "b67f18b7", 0],
+    [140, "a", "d9e3ce5e", 0],
+    [141, "a", "c485c22d", 0],
+    [142, "a", "6fd32dce", 0],
+    [143, "a", "9625a000", 0],
+    [144, "a", "8d981765", 0],
+    [145, "a", "ad8cb514", 0],
+    [146, "a", "a31996cd", 0],
+    [147, "a", "9845a6a3", 0]
+  ]
+}

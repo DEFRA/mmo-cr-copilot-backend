@@ -3,9 +3,11 @@ import Joi from 'joi'
 
 import {
   assertRepositoryRole,
+  projectRepositoryNames,
   readableRepositoryNames,
   requireUser
 } from '#/common/helpers/project-access.js'
+import { PROJECT_SLUG_PATTERN } from '#/schemas/project.js'
 
 /**
  * Read-only proxy to SonarCloud; token stays server-side and degrades gracefully.
@@ -30,22 +32,23 @@ export const sonar = [
     options: {
       validate: {
         query: Joi.object({
-          asOf: Joi.date().iso().optional()
+          asOf: Joi.date().iso().optional(),
+          project: Joi.string().pattern(PROJECT_SLUG_PATTERN).optional()
         })
       }
     },
     handler: async (request, h) => {
       const user = requireUser(request)
+      const allowed = request.query.project
+        ? await projectRepositoryNames(request, request.query.project)
+        : await readableRepositoryNames(request.db, user)
       try {
         const overview = await request.sonar.getOverview({
           asOf: request.query.asOf,
           db: request.db
         })
-        const allowed = Array.isArray(overview)
-          ? await readableRepositoryNames(request.db, user)
-          : null
         return h.response(
-          allowed
+          allowed && Array.isArray(overview)
             ? overview.filter((entry) => allowed.has(entry.repository))
             : overview
         )

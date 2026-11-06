@@ -307,6 +307,34 @@ describe('#sonar routes', () => {
       expect(hidden.result).toEqual([])
     })
 
+    test('Should limit the overview to repositories mapped to the requested project', async () => {
+      mockSonarOk()
+      await server.db
+        .collection('projects')
+        .insertOne({ slug: 'BETA', name: 'Beta', archivedAt: null })
+      await server.db
+        .collection('repositories')
+        .updateOne(
+          { fullName: 'DEFRA/repo-one' },
+          { $set: { projectSlug: 'BETA' } }
+        )
+
+      const alpha = await get('/api/sonar/overview?project=ALPH')
+      const beta = await get('/api/sonar/overview?project=BETA')
+
+      expect(alpha.result).toEqual([])
+      expect(beta.result.map((r) => r.repository)).toEqual(['DEFRA/repo-one'])
+    })
+
+    test('Should hide a project overview from someone with no role on it', async () => {
+      const { statusCode } = await inject(
+        '/api/sonar/overview?project=ALPH',
+        outsider
+      )
+
+      expect(statusCode).toBe(404)
+    })
+
     test('Should reject a request with no signed context', async () => {
       const { statusCode } = await server.inject('/api/sonar/overview')
 

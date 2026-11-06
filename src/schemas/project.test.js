@@ -42,6 +42,20 @@ describe('#project schemas', () => {
       expect(one.error).toBeUndefined()
       expect(two.error.details[0].type).toBe('array.max')
     })
+
+    test.each(['FI0', 'A1', 'AB12_3'])(
+      'Should accept the alphanumeric Jira key %s',
+      (key) => {
+        expect(create({ jira: { projectKeys: [key] } }).error).toBeUndefined()
+      }
+    )
+
+    test.each(['0FI', 'fi0', 'F', 'FI-0'])(
+      'Should reject the Jira key %s',
+      (key) => {
+        expect(create({ jira: { projectKeys: [key] } }).error).toBeDefined()
+      }
+    )
   })
 
   describe('#projectSlugParamSchema', () => {

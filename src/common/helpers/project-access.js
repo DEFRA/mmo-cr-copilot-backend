@@ -120,13 +120,30 @@ export async function assertRepositoryRole(
 
 /** The active project named in the path, once the caller's role on it is checked. */
 export async function loadProject(request, minimum = PROJECT_ROLES.user) {
-  const project = await findProject(request.db, request.params.slug)
+  return loadProjectBySlug(request, request.params.slug, minimum)
+}
+
+export async function loadProjectBySlug(
+  request,
+  slug,
+  minimum = PROJECT_ROLES.user
+) {
+  const project = await findProject(request.db, slug)
   if (!project || project.archivedAt) {
     // Same answer as a project the caller cannot see.
     requireUser(request)
-    throw Boom.notFound(`Project '${request.params.slug}' not found`)
+    throw Boom.notFound(`Project '${slug}' not found`)
   }
   return { project, ...assertProjectRole(request, project, minimum) }
+}
+
+/** Repositories mapped to one project the caller may read. */
+export async function projectRepositoryNames(request, slug) {
+  await loadProjectBySlug(request, slug)
+  const repositories = await listRepositories(request.db)
+  return new Set(
+    repositories.filter((r) => r.projectSlug === slug).map((r) => r.fullName)
+  )
 }
 
 /** Names of repositories the caller may read; null means every repository. */
