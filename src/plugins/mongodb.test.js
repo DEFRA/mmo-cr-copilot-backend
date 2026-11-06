@@ -309,7 +309,13 @@ describe('#mongoDb', () => {
       await migrations.migrateDefaultProject(db)
 
       const projects = await db.collection('projects').find().toArray()
-      expect(projects.map((p) => p.slug)).toEqual(['CRAR'])
+      expect(projects).toEqual([
+        expect.objectContaining({
+          slug: 'CRAR',
+          type: 'ai-native',
+          adoptionStartDate: null
+        })
+      ])
     })
   })
 })

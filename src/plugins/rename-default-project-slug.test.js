@@ -2,6 +2,7 @@ const LEGACY = {
   slug: 'FES',
   name: 'MMO Catch Recording',
   type: 'ai-adopted',
+  adoptionStartDate: new Date('2026-01-01T00:00:00.000Z'),
   jira: { projectKeys: ['MMOCR'] }
 }
 const REPO = 'DEFRA/mmo-cr-ios'
@@ -115,6 +116,16 @@ describe('#renameDefaultProjectSlug', () => {
         expect(await count(name, { projectSlug: 'FES' })).toBe(0)
         expect(await count(name, { projectSlug: 'CRAR' })).toBe(1)
       }
+    })
+
+    test('Should make the project AI-Native with no adoption date', async () => {
+      const project = await db.collection('projects').findOne({ slug: 'CRAR' })
+
+      expect(project).toMatchObject({
+        type: 'ai-native',
+        adoptionStartDate: null,
+        jira: { projectKeys: ['MMOCR'] }
+      })
     })
 
     test('Should move persona mappings to the key of the new slug', async () => {

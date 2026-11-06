@@ -91,7 +91,8 @@ async function moveRoleMappings(db) {
 }
 
 /**
- * Renames the auto-created CR project from FES to CRAR and moves everything
+ * Renames the auto-created CR project from FES to CRAR, makes it AI-Native and
+ * moves everything
  * that refers to it. The project is renamed last, so an interrupted run is
  * finished by the next start. Existing audit entries keep their slug.
  */
@@ -106,12 +107,20 @@ export async function renameDefaultProjectSlug(db, logger) {
   const lock = await new LockManager(db.collection('mongo-locks')).lock(LOCK)
   if (!lock) return false
   let roleMappings
+  let before
   try {
-    if (!(await projects.findOne(LEGACY_PROJECT))) return false
+    before = await projects.findOne(LEGACY_PROJECT)
+    if (!before) return false
     await renameSlugReferences(db)
     roleMappings = await moveRoleMappings(db)
+    // The CR project is AI-Native, which has no adoption date.
     await projects.updateOne(LEGACY_PROJECT, {
-      $set: { slug: TO, updatedAt: new Date() }
+      $set: {
+        slug: TO,
+        type: 'ai-native',
+        adoptionStartDate: null,
+        updatedAt: new Date()
+      }
     })
   } finally {
     await lock.free()
@@ -125,9 +134,9 @@ export async function renameDefaultProjectSlug(db, logger) {
       entity: 'project',
       entityId: TO,
       projectSlug: TO,
-      summary: `Project slug renamed from ${FROM} to ${TO}`,
-      before: { slug: FROM },
-      after: { slug: TO }
+      summary: `Project ${FROM} renamed to ${TO} and set to AI-Native`,
+      before: { slug: FROM, type: before.type },
+      after: { slug: TO, type: 'ai-native' }
     },
     logger
   )

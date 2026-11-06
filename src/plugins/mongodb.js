@@ -242,8 +242,8 @@ export async function migrateDefaultProject(db, logger) {
     await db.collection('projects').insertOne({
       slug: DEFAULT_PROJECT_SLUG,
       name: 'MMO Catch Recording',
-      type: 'ai-adopted',
-      adoptionStartDate: new Date('2026-01-01T00:00:00.000Z'),
+      type: 'ai-native',
+      adoptionStartDate: null,
       sprintCalendar: {
         cadenceDays: 14,
         anchorDate: new Date('2026-07-08T00:00:00.000Z')
