@@ -1,17 +1,17 @@
 {
   "schema": "ai-attribution/2",
-  "id": "7f7efb6cbd55",
-  "extensionVersion": "0.4.0",
+  "id": "9d3ecf610694",
+  "extensionVersion": "1.0.0",
   "totals": {
     "aiCompletion": 0,
     "aiChat": 0,
-    "aiAgent": 33,
+    "aiAgent": 11,
     "aiModified": 0,
     "pasted": 0,
     "typed": 0,
-    "untracked": 2
+    "untracked": 0
   },
-  "fileCount": 2,
+  "fileCount": 1,
   "signals": {
     "agentHooks": "installed",
     "completionKeys": "enabled",
