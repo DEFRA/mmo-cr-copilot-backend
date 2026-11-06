@@ -182,7 +182,7 @@ describe('#renameDefaultProjectSlug', () => {
           action: 'project.updated',
           projectSlug: 'CRAR'
         })
-      ).toBe(1)
+      ).toBe(2)
       expect(
         await count('audit-logs', {
           action: 'role-mapping.migrated',
@@ -194,8 +194,52 @@ describe('#renameDefaultProjectSlug', () => {
     test('Should do nothing on a second run', async () => {
       expect(await renameDefaultProjectSlug(db)).toBe(false)
       expect(await count('role_mappings', { projectSlug: 'CRAR' })).toBe(3)
+      expect(await count('audit-logs', { action: 'project.updated' })).toBe(2)
+    })
+  })
+
+  describe('When an earlier build already renamed the project', () => {
+    beforeEach(async () => {
+      await db.collection('projects').insertOne({ ...LEGACY, slug: 'CRAR' })
+    })
+
+    test('Should make it AI-Native with no adoption date', async () => {
+      expect(await renameDefaultProjectSlug(db)).toBe(true)
+
+      const project = await db.collection('projects').findOne({ slug: 'CRAR' })
+      expect(project).toMatchObject({
+        type: 'ai-native',
+        adoptionStartDate: null
+      })
+      expect(
+        await db
+          .collection('audit-logs')
+          .findOne({ action: 'project.updated', projectSlug: 'CRAR' })
+      ).toMatchObject({
+        before: { type: 'ai-adopted' },
+        after: { type: 'ai-native' }
+      })
+    })
+
+    test('Should do nothing once it is AI-Native', async () => {
+      await renameDefaultProjectSlug(db)
+
+      expect(await renameDefaultProjectSlug(db)).toBe(false)
       expect(await count('audit-logs', { action: 'project.updated' })).toBe(1)
     })
+  })
+
+  test('Should leave a CRAR project without the CR Jira key alone', async () => {
+    await db.collection('projects').insertOne({
+      slug: 'CRAR',
+      type: 'ai-adopted',
+      jira: { projectKeys: ['OTHER'] }
+    })
+
+    expect(await renameDefaultProjectSlug(db)).toBe(false)
+    expect(
+      await db.collection('projects').findOne({ slug: 'CRAR' })
+    ).toMatchObject({ type: 'ai-adopted' })
   })
 
   test('Should finish a rename that stopped before the project was renamed', async () => {

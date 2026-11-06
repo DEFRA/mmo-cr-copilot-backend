@@ -23,7 +23,8 @@ const TO = 'CRAR'
 const LOCK = 'rename-default-project-slug'
 
 // The auto-created CR project; a genuine FES project never carries the MMOCR key.
-const LEGACY_PROJECT = { slug: FROM, 'jira.projectKeys': 'MMOCR' }
+const CR_JIRA_KEY = 'MMOCR'
+const LEGACY_PROJECT = { slug: FROM, 'jira.projectKeys': CR_JIRA_KEY }
 const FES_GROUP = /^AG-Users-CopilotAnalytics-FES-/
 const CRAR_GROUPS = [
   ['AG-Users-CopilotAnalytics-CRAR-Admin', ROLES.projectAdmin],
@@ -91,12 +92,11 @@ async function moveRoleMappings(db) {
 }
 
 /**
- * Renames the auto-created CR project from FES to CRAR, makes it AI-Native and
- * moves everything
+ * Renames the auto-created CR project from FES to CRAR and moves everything
  * that refers to it. The project is renamed last, so an interrupted run is
  * finished by the next start. Existing audit entries keep their slug.
  */
-export async function renameDefaultProjectSlug(db, logger) {
+async function renameSlug(db, logger) {
   const projects = db.collection(PROJECTS_COLLECTION)
   if (!(await projects.findOne(LEGACY_PROJECT))) return false
   if (await projects.findOne({ slug: TO })) {
@@ -107,20 +107,12 @@ export async function renameDefaultProjectSlug(db, logger) {
   const lock = await new LockManager(db.collection('mongo-locks')).lock(LOCK)
   if (!lock) return false
   let roleMappings
-  let before
   try {
-    before = await projects.findOne(LEGACY_PROJECT)
-    if (!before) return false
+    if (!(await projects.findOne(LEGACY_PROJECT))) return false
     await renameSlugReferences(db)
     roleMappings = await moveRoleMappings(db)
-    // The CR project is AI-Native, which has no adoption date.
     await projects.updateOne(LEGACY_PROJECT, {
-      $set: {
-        slug: TO,
-        type: 'ai-native',
-        adoptionStartDate: null,
-        updatedAt: new Date()
-      }
+      $set: { slug: TO, updatedAt: new Date() }
     })
   } finally {
     await lock.free()
@@ -134,9 +126,9 @@ export async function renameDefaultProjectSlug(db, logger) {
       entity: 'project',
       entityId: TO,
       projectSlug: TO,
-      summary: `Project ${FROM} renamed to ${TO} and set to AI-Native`,
-      before: { slug: FROM, type: before.type },
-      after: { slug: TO, type: 'ai-native' }
+      summary: `Project slug renamed from ${FROM} to ${TO}`,
+      before: { slug: FROM },
+      after: { slug: TO }
     },
     logger
   )
@@ -153,4 +145,46 @@ export async function renameDefaultProjectSlug(db, logger) {
   )
   logger?.info(`Renamed project ${FROM} to ${TO}`)
   return true
+}
+
+// Separate from the rename so it also fixes a project an earlier build already renamed.
+async function makeAiNative(db, logger) {
+  const before = await db.collection(PROJECTS_COLLECTION).findOneAndUpdate(
+    {
+      slug: TO,
+      'jira.projectKeys': CR_JIRA_KEY,
+      type: { $ne: 'ai-native' }
+    },
+    {
+      $set: {
+        type: 'ai-native',
+        adoptionStartDate: null,
+        updatedAt: new Date()
+      }
+    }
+  )
+  if (!before) return false
+
+  await recordAuditEvent(
+    db,
+    {
+      action: 'project.updated',
+      entity: 'project',
+      entityId: TO,
+      projectSlug: TO,
+      summary: `Project ${TO} set to AI-Native`,
+      before: { type: before.type },
+      after: { type: 'ai-native' }
+    },
+    logger
+  )
+  logger?.info(`Set project ${TO} to AI-Native`)
+  return true
+}
+
+/** Renames the CR project to CRAR, then makes it AI-Native; each step runs at most once. */
+export async function renameDefaultProjectSlug(db, logger) {
+  const renamed = await renameSlug(db, logger)
+  const madeNative = await makeAiNative(db, logger)
+  return renamed || madeNative
 }
