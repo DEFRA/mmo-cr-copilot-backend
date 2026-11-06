@@ -9,10 +9,14 @@ import {
 } from '#/schemas/payload.js'
 import { AUDIT_ACTIONS, AUDIT_ENTITIES } from '#/schemas/audit-log.js'
 import { requireIngestToken } from '#/common/helpers/ingest-auth.js'
+import {
+  PROJECT_ROLES,
+  assertRepositoryRole
+} from '#/common/helpers/project-access.js'
 import { recordAuditEvent } from '#/services/audit-logs.js'
+import { fetchUnknownJiraIssues } from '#/plugins/jira-sync.js'
 import {
   CLASSIFICATION_UPDATE,
-  findLatestPayloads,
   findPayloadHistory,
   savePayload,
   updateCommitClassification
@@ -25,6 +29,7 @@ export const payloads = [
     method: 'POST',
     path: '/api/payloads',
     options: {
+      auth: false,
       pre: [{ method: requireIngestToken }],
       payload: {
         parse: true,
@@ -36,14 +41,25 @@ export const payloads = [
       }
     },
     handler: async (request, h) => {
-      const { record, stored } = await savePayload(
+      const { record, stored, projectSlug } = await savePayload(
         request.db,
         request.payload,
         request.logger
       )
 
+      if (stored && request.server?.jira) {
+        // Not awaited: an unreachable Jira must never slow or fail ingest.
+        fetchUnknownJiraIssues({
+          db: request.db,
+          client: request.server.jira,
+          projectSlug,
+          jiraKeys: record.jiraKeys,
+          logger: request.logger
+        })
+      }
+
       request.logger.info(
-        `${stored ? 'Stored' : 'Ignored stale'} analytics payload for ${record.repository}#${record.prNumber} buildId=${record.buildId}`
+        `${stored ? 'Stored' : 'Ignored stale'} analytics payload for ${record.repository}#${record.prNumber} buildId=${record.buildId} schemaVersion=${record.schemaVersion}`
       )
 
       return h
@@ -53,14 +69,6 @@ export const payloads = [
           prNumber: record.prNumber
         })
         .code(statusCreated)
-    }
-  },
-  {
-    method: 'GET',
-    path: '/api/payloads',
-    handler: async (request, h) => {
-      const results = await findLatestPayloads(request.db)
-      return h.response({ payloads: results })
     }
   },
   {
@@ -77,6 +85,7 @@ export const payloads = [
     },
     handler: async (request, h) => {
       const { repository, prNumber } = request.params
+      await assertRepositoryRole(request, repository)
       const results = await findPayloadHistory(request.db, repository, prNumber)
 
       return h.response({ repository, prNumber, payloads: results })
@@ -93,6 +102,11 @@ export const payloads = [
     },
     handler: async (request, h) => {
       const { repository, prNumber, commit } = request.params
+      const { user, project } = await assertRepositoryRole(
+        request,
+        repository,
+        PROJECT_ROLES.admin
+      )
       const { classification } = request.payload
 
       const { status, previousClassification, payload } =
@@ -126,9 +140,11 @@ export const payloads = [
             action: AUDIT_ACTIONS.commitClassificationUpdated,
             entity: AUDIT_ENTITIES.commitClassification,
             entityId: `${repository}#${prNumber}@${commit}`,
+            projectSlug: project?.slug ?? null,
             summary: `Commit ${commit} on ${repository}#${prNumber} re-classified from '${previousClassification}' to '${classification}'`,
             before: { classification: previousClassification },
-            after: { classification }
+            after: { classification },
+            actor: { oid: user.oid, name: user.name }
           },
           request.logger
         )

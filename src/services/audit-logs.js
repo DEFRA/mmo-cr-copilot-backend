@@ -34,7 +34,16 @@ function toEntry(doc) {
  */
 export async function recordAuditEvent(
   db,
-  { action, entity, entityId, summary, before = null, after = null },
+  {
+    action,
+    entity,
+    entityId,
+    summary,
+    before = null,
+    after = null,
+    actor = SYSTEM_ACTOR,
+    projectSlug = null
+  },
   logger
 ) {
   const event = {
@@ -44,7 +53,8 @@ export async function recordAuditEvent(
     summary,
     before,
     after,
-    actor: SYSTEM_ACTOR,
+    actor: actor || SYSTEM_ACTOR,
+    projectSlug,
     occurredAt: new Date()
   }
 
@@ -59,17 +69,20 @@ export async function recordAuditEvent(
 
 /**
  * One page of the audit trail, newest first, optionally narrowed to the
- * half-open window `[from, to)`.
+ * half-open window `[from, to)` and to one project.
  */
 export async function findAuditLogs(
   db,
-  { from, to, page = 1, pageSize = 25 } = {}
+  { from, to, page = 1, pageSize = 25, projectSlug } = {}
 ) {
   const occurredAt = {
     ...(from ? { $gte: from } : {}),
     ...(to ? { $lt: to } : {})
   }
-  const filter = Object.keys(occurredAt).length > 0 ? { occurredAt } : {}
+  const filter = {
+    ...(Object.keys(occurredAt).length > 0 ? { occurredAt } : {}),
+    ...(projectSlug ? { projectSlug } : {})
+  }
 
   const collection = db.collection(AUDIT_LOGS_COLLECTION)
   const total = await collection.countDocuments(filter)

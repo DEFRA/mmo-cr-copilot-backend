@@ -3,7 +3,14 @@ import convictFormatWithValidator from 'convict-format-with-validator'
 
 import { convictValidateMongoUri } from '#/common/helpers/convict/validate-mongo-uri.js'
 
+import {
+  convictValidateGuidList,
+  convictValidateGuidOrEmpty
+} from '#/common/helpers/convict/validate-guid.js'
+
 convict.addFormat(convictValidateMongoUri)
+convict.addFormat(convictValidateGuidOrEmpty)
+convict.addFormat(convictValidateGuidList)
 convict.addFormats(convictFormatWithValidator)
 
 const isProduction = process.env.NODE_ENV === 'production'
@@ -71,14 +78,12 @@ export const config = convict({
     redact: {
       doc: 'Log paths to redact',
       format: Array,
-      default: isProduction
-        ? [
-            'req.headers.authorization',
-            'req.headers.cookie',
-            'req.headers["x-ingest-token"]',
-            'res.headers'
-          ]
-        : ['req', 'res', 'responseTime']
+      default: [
+        'req.headers.authorization',
+        'req.headers.cookie',
+        'req.headers["x-ingest-token"]',
+        ...(isProduction ? ['res.headers'] : ['req', 'res', 'responseTime'])
+      ]
     }
   },
   mongo: {
@@ -132,9 +137,83 @@ export const config = convict({
       env: 'TRACING_HEADER'
     }
   },
+  auth: {
+    entraTenantId: {
+      doc: 'Entra ID tenant that issues access tokens. Required outside local development.',
+      format: 'guid-or-empty',
+      default: '',
+      env: 'ENTRA_TENANT_ID'
+    },
+    entraBackendClientId: {
+      doc: 'Client ID of the backend app registration; the only accepted aud. Required outside local development.',
+      format: 'guid-or-empty',
+      default: '',
+      env: 'ENTRA_BACKEND_CLIENT_ID'
+    },
+    entraBackendScope: {
+      doc: 'Delegated scope every access token must carry',
+      format: String,
+      default: 'access_as_user',
+      env: 'ENTRA_BACKEND_SCOPE'
+    },
+    allowedClientIds: {
+      doc: 'Comma-separated client IDs allowed as the token azp (the dashboard app registration). Required outside local development.',
+      format: 'guid-list',
+      default: '',
+      env: 'AUTH_ALLOWED_CLIENT_IDS'
+    },
+    clockToleranceSeconds: {
+      doc: 'Clock skew tolerated on exp and nbf',
+      format: 'nat',
+      default: 60,
+      env: 'AUTH_CLOCK_TOLERANCE_SECONDS'
+    },
+    jwksTimeoutMs: {
+      doc: 'Timeout for fetching the Entra signing keys',
+      format: 'nat',
+      default: 5000,
+      env: 'AUTH_JWKS_TIMEOUT_MS'
+    },
+    jwksCacheMaxAgeMs: {
+      doc: 'How long fetched signing keys are cached',
+      format: 'nat',
+      default: 600000,
+      env: 'AUTH_JWKS_CACHE_MAX_AGE_MS'
+    },
+    jwksCooldownMs: {
+      doc: 'Minimum time between signing key refetches',
+      format: 'nat',
+      default: 30000,
+      env: 'AUTH_JWKS_COOLDOWN_MS'
+    },
+    devBypass: {
+      doc: 'Accepts synthetic dev-mock bearer tokens. Refused outside local development and tests.',
+      format: Boolean,
+      default: false,
+      env: 'AUTH_DEV_BYPASS'
+    },
+    roleCacheTtlMs: {
+      doc: 'How long resolved group-to-role results are cached',
+      format: 'nat',
+      default: 60000,
+      env: 'AUTH_ROLE_CACHE_TTL_MS'
+    },
+    roleCacheMaxEntries: {
+      doc: 'Maximum cached group-to-role results',
+      format: 'nat',
+      default: 500,
+      env: 'AUTH_ROLE_CACHE_MAX_ENTRIES'
+    },
+    bootstrapAdminGroup: {
+      doc: 'Group name (as emitted in the token groups claim) mapped to Dashboard Admin on start-up when no Dashboard Admin mapping exists',
+      format: String,
+      default: 'AG-Users-CopilotAnalytics-Dashboard-Admin',
+      env: 'AUTH_BOOTSTRAP_ADMIN_GROUP'
+    }
+  },
   ingest: {
     token: {
-      doc: 'Shared secret the dashboard frontend presents on POST /api/payloads. Required outside local development.',
+      doc: 'Service-to-service secret the dashboard presents on POST /api/payloads. Must match INGEST_TOKEN on the dashboard. Required outside local development.',
       format: String,
       default: '',
       sensitive: true,
@@ -161,12 +240,6 @@ export const config = convict({
       sensitive: true,
       env: 'SONAR_TOKEN'
     },
-    projectMap: {
-      doc: 'JSON map of "<git repository>": "<SonarCloud project key>". Repositories absent from the map are reported as not linked.',
-      format: String,
-      default: '',
-      env: 'SONAR_PROJECT_MAP'
-    },
     requestTimeoutMs: {
       doc: 'Timeout applied to each SonarCloud API request',
       format: Number,
@@ -178,6 +251,46 @@ export const config = convict({
       format: Number,
       default: 300000,
       env: 'SONAR_CACHE_TTL_MS'
+    },
+    snapshotFallback: {
+      doc: 'Local development only: serve /api/sonar/* from stored snapshots instead of SonarCloud (ADR 0006)',
+      format: Boolean,
+      default: false,
+      env: 'SONAR_SNAPSHOT_FALLBACK'
+    }
+  },
+  jira: {
+    baseUrl: {
+      doc: 'Jira Cloud base URL (e.g. https://your-domain.atlassian.net)',
+      format: String,
+      default: '',
+      env: 'JIRA_BASE_URL'
+    },
+    email: {
+      doc: 'Jira service account email address',
+      format: String,
+      default: '',
+      env: 'JIRA_EMAIL',
+      sensitive: true
+    },
+    apiToken: {
+      doc: 'Jira API token for basic authentication',
+      format: String,
+      default: '',
+      env: 'JIRA_API_TOKEN',
+      sensitive: true
+    },
+    requestTimeoutMs: {
+      doc: 'Jira request timeout',
+      format: Number,
+      default: 10000,
+      env: 'JIRA_REQUEST_TIMEOUT_MS'
+    },
+    syncIntervalMinutes: {
+      doc: 'Minutes between incremental Jira syncs of every project with Jira keys; 0 turns the scheduled sync off',
+      format: 'nat',
+      default: 15,
+      env: 'JIRA_SYNC_INTERVAL_MINUTES'
     }
   }
 })
@@ -189,8 +302,22 @@ config.validate({ allowed: 'strict' })
  * keeps local development frictionless, but a deployed environment that lost
  * its SSM injection would otherwise run wide open and only log a warning.
  */
+const bypassAllowed =
+  config.get('cdpEnvironment') === 'local' || process.env.NODE_ENV === 'test'
+
+if (config.get('auth.devBypass') && !bypassAllowed) {
+  throw new Error(
+    'AUTH_DEV_BYPASS is only allowed in the local environment and in tests'
+  )
+}
+
 if (config.get('cdpEnvironment') !== 'local') {
-  const required = [['ingest.token', 'INGEST_TOKEN']]
+  const required = [
+    ['ingest.token', 'INGEST_TOKEN'],
+    ['auth.entraTenantId', 'ENTRA_TENANT_ID'],
+    ['auth.entraBackendClientId', 'ENTRA_BACKEND_CLIENT_ID'],
+    ['auth.allowedClientIds', 'AUTH_ALLOWED_CLIENT_IDS']
+  ]
 
   const missing = required
     .filter(([key]) => !config.get(key).trim())
@@ -199,6 +326,12 @@ if (config.get('cdpEnvironment') !== 'local') {
   if (missing.length) {
     throw new Error(
       `Missing required configuration in the '${config.get('cdpEnvironment')}' environment: ${missing.join(', ')}`
+    )
+  }
+
+  if (config.get('sonar.snapshotFallback')) {
+    throw new Error(
+      'SONAR_SNAPSHOT_FALLBACK is only allowed in the local environment'
     )
   }
 }

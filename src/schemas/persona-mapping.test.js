@@ -7,28 +7,29 @@ describe('#githubHandleParamSchema', () => {
   const validate = (githubHandle) =>
     githubHandleParamSchema.validate({ githubHandle })
 
-  test('Should accept a simple handle', () => {
-    expect(validate('octocat').error).toBeUndefined()
+  test.each([
+    'octocat',
+    'randhir-patel',
+    'Jeevan K R',
+    'Zoë O’Brien',
+    '-x',
+    'a'.repeat(100)
+  ])('Should accept the git config name %s', (handle) => {
+    expect(validate(handle).error).toBeUndefined()
   })
 
-  test('Should accept a handle with a hyphen', () => {
-    expect(validate('randhir-patel').error).toBeUndefined()
-  })
-
-  test('Should reject a handle starting with a hyphen', () => {
-    expect(validate('-octocat').error).toBeDefined()
-  })
-
-  test('Should reject a handle with consecutive hyphens', () => {
-    expect(validate('octo--cat').error).toBeDefined()
-  })
-
-  test('Should reject an empty handle', () => {
-    expect(validate('').error).toBeDefined()
-  })
-
-  test('Should reject a handle longer than 39 characters', () => {
-    expect(validate('a'.repeat(40)).error).toBeDefined()
+  test.each([
+    '',
+    '.',
+    '..',
+    'a/b',
+    'a\\b',
+    ' leading',
+    'trailing ',
+    'new\nline',
+    'a'.repeat(101)
+  ])('Should reject %j', (handle) => {
+    expect(validate(handle).error).toBeDefined()
   })
 })
 

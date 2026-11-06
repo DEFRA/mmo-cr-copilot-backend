@@ -24,9 +24,9 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      # Lets the shared workflow authenticate to the dashboard with a GitHub OIDC token.
+      id-token: write
     uses: DEFRA/mmo-cr-devops-common/.github/workflows/copilot-analytics.yml@main
     with:
       pr-number: ${{ inputs.pr_number || '' }}
       ingest-url: ${{ vars.COPILOT_ANALYTICS_INGEST_URL }}
-    secrets:
-      ingest-token: ${{ secrets.COPILOT_INGEST_TOKEN }}

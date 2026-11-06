@@ -169,7 +169,8 @@ Import with `#/` (→ `src/`) and `#/test-helpers/` (→ `test-helpers/`).
 
 - Install: `npm install`
 - Develop (watch): `npm run dev` — the service is on `:3001`
-- Local dependencies: `docker compose up -d mongodb` (Mongo, Redis and floci for the full stack)
+- Local dependencies: `docker compose up -d mongodb`, or `docker compose up -d` for MongoDB plus the
+  service
 - Production start: `npm start`
 - Lint: `npm run lint` · Fix: `npm run lint:fix`
 - Format: `npm run format` · Check: `npm run format:check`
@@ -178,6 +179,8 @@ Import with `#/` (→ `src/`) and `#/test-helpers/` (→ `test-helpers/`).
 - Full pre-commit gate: `npm run git:pre-commit-hook`
 
 ## 7. Rule sources — read before editing
+
+Before architecture-affecting work, read the [ADRs](docs/adr/README.md).
 
 Read the instruction files whose `applyTo` matches the files you are touching:
 

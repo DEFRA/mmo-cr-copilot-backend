@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 2,
+  "source": "live",
+  "prNumber": 5,
+  "repository": "DEFRA/example",
+  "prTitle": "MMO-7 Add charts",
+  "jiraKeys": ["CR-42", "MMO-7"],
+  "sourceBranch": "feature/MMO-7-charts",
+  "targetBranch": "main",
+  "buildId": "build-1",
+  "calculatedAt": "2026-10-15T16:31:31.1986362Z",
+  "prCreatedAt": "2026-10-15T16:31:30.0000000Z",
+  "firstCommitAt": "2026-10-15T16:31:30.0000000Z",
+  "lastCommitAt": "2026-10-15T16:31:30.0000000Z",
+  "prMergedAt": "",
+  "summary": {
+    "totalCommits": 2,
+    "copilotAssistedCommits": 1,
+    "humanAuthoredCommits": 1,
+    "copilotAssistedRate": 50.0,
+    "totalLinesTouched": 18,
+    "copilotAssistedLines": 15,
+    "humanAuthoredLines": 3,
+    "copilotAssistedLineRate": 83.33,
+    "excludedCommits": 1,
+    "rebaseCommits": 1,
+    "dependabotCommits": 0
+  },
+  "contributorBreakdown": [
+    {
+      "contributor": "Ada Example",
+      "totalCommits": 2,
+      "copilotAssisted": 1,
+      "humanAuthored": 1,
+      "linesAdded": 18,
+      "linesDeleted": 0,
+      "linesTouched": 18,
+      "netLines": 18,
+      "copilotAssistedLines": 15,
+      "humanAuthoredLines": 3
+    }
+  ],
+  "commitBreakdown": [
+    {
+      "commit": "914326d",
+      "committedAt": "2026-10-15T16:31:30.0000000Z",
+      "authoredAt": "2026-10-15T16:31:30.0000000Z",
+      "author": "Ada Example",
+      "subject": "Merge branch 'main' into feature/MMO-7-charts",
+      "classification": "Rebase",
+      "filesChanged": 1,
+      "linesAdded": 20,
+      "linesDeleted": 0,
+      "linesTouched": 20,
+      "netLines": 20,
+      "attribution": { "source": "none" }
+    },
+    {
+      "commit": "c9eab39",
+      "committedAt": "2026-10-15T16:31:30.0000000Z",
+      "authoredAt": "2026-10-15T16:31:30.0000000Z",
+      "author": "Ada Example",
+      "subject": "Add view",
+      "classification": "Human-authored",
+      "filesChanged": 1,
+      "linesAdded": 3,
+      "linesDeleted": 0,
+      "linesTouched": 3,
+      "netLines": 3,
+      "attribution": { "source": "none" }
+    },
+    {
+      "commit": "78a08a6",
+      "committedAt": "2026-10-15T16:31:30.0000000Z",
+      "authoredAt": "2026-10-15T16:31:30.0000000Z",
+      "author": "Ada Example",
+      "subject": "Add chart",
+      "classification": "Copilot-assisted",
+      "filesChanged": 2,
+      "linesAdded": 15,
+      "linesDeleted": 0,
+      "linesTouched": 15,
+      "netLines": 15,
+      "attribution": { "source": "legacy-trailer" }
+    }
+  ],
+  "files": {
+    "changed": 2,
+    "linesTouched": 13,
+    "testFilesChanged": 1,
+    "testLinesTouched": 5,
+    "modulesTouched": 2,
+    "excluded": { "filesChanged": 1, "linesTouched": 100 }
+  }
+}

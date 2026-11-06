@@ -1,4 +1,6 @@
 import { COUNTED_CLASSIFICATIONS } from '#/schemas/payload.js'
+import { computeComplexityScore } from '#/services/complexity.js'
+import { linkPrsToJiraIssues } from '#/services/pr-jira-links.js'
 
 export const PAYLOADS_COLLECTION = 'payloads'
 
@@ -55,22 +57,36 @@ function toDocument(payload) {
   }
 }
 
-function toPayload(doc) {
+// v1 documents are never given v2 defaults: a missing `jiraKeys` means "not
+// collected", which an invented `[]` ("none found") would misreport.
+export function toPayload(doc) {
   const {
     _id: _ignoredId,
     receivedAt: _ignoredReceivedAt,
     classificationOverrides: _ignoredOverrides,
+    projectSlug: _ignoredProjectSlug,
     ...rest
   } = doc
 
-  return {
+  const payload = {
     ...rest,
+    schemaVersion: rest.schemaVersion ?? 1,
     ...mapDefined(rest, ROOT_DATE_FIELDS, toIso),
     commitBreakdown: (rest.commitBreakdown ?? []).map((commit) => ({
       ...commit,
       ...mapDefined(commit, ['committedAt'], toIso)
     }))
   }
+
+  if (doc.projectSlug !== undefined) {
+    payload.projectSlug = doc.projectSlug
+  }
+
+  if (doc.complexity) {
+    payload.complexity = doc.complexity
+  }
+
+  return payload
 }
 
 const isCounted = (commit) =>
@@ -218,6 +234,18 @@ export async function savePayload(db, payload, logger) {
 
   let record = payload
 
+  // A live merged record is authoritative; backfill only fills gaps (E6-S4).
+  if (
+    payload.source === 'backfill' &&
+    previous?.prMergedAt &&
+    (previous.source ?? 'live') === 'live'
+  ) {
+    logger?.info(
+      `Skipped backfill for ${payload.repository}#${payload.prNumber}; a live merged payload exists`
+    )
+    return { record: payload, stored: false }
+  }
+
   if (!payload.sourceBranch) {
     if (previous?.sourceBranch) {
       record = { ...payload, sourceBranch: previous.sourceBranch }
@@ -234,11 +262,29 @@ export async function savePayload(db, payload, logger) {
   const classificationOverrides = previous?.classificationOverrides ?? []
   record = applyClassificationOverrides(record, classificationOverrides, logger)
 
+  const repo = await db
+    .collection('repositories')
+    .findOne({ fullName: record.repository })
+  const projectSlug = repo?.projectSlug || null
+  const model = projectSlug
+    ? (
+        await db
+          .collection('projects')
+          .findOne({ slug: projectSlug }, { projection: { complexity: 1 } })
+      )?.complexity
+    : undefined
+
+  const complexity = record.files
+    ? computeComplexityScore(record.files, model)
+    : undefined
+
   const filter = { repository: record.repository, prNumber: record.prNumber }
   const document = {
     ...toDocument(record),
     classificationOverrides,
-    receivedAt: new Date()
+    projectSlug,
+    receivedAt: new Date(),
+    ...(complexity ? { complexity } : {})
   }
 
   // At most two passes: if the insert loses a race to a concurrent writer,
@@ -250,12 +296,36 @@ export async function savePayload(db, payload, logger) {
     )
 
     if (matchedCount > 0) {
-      return { record, stored: true }
+      if (
+        projectSlug &&
+        Array.isArray(record.jiraKeys) &&
+        record.jiraKeys.length > 0
+      ) {
+        await linkPrsToJiraIssues(db, {
+          projectSlug,
+          repository: record.repository,
+          prNumber: record.prNumber,
+          jiraKeys: record.jiraKeys
+        })
+      }
+      return { record, stored: true, projectSlug }
     }
 
     try {
       await collection.insertOne({ ...document, updateCount: 1 })
-      return { record, stored: true }
+      if (
+        projectSlug &&
+        Array.isArray(record.jiraKeys) &&
+        record.jiraKeys.length > 0
+      ) {
+        await linkPrsToJiraIssues(db, {
+          projectSlug,
+          repository: record.repository,
+          prNumber: record.prNumber,
+          jiraKeys: record.jiraKeys
+        })
+      }
+      return { record, stored: true, projectSlug }
     } catch (error) {
       if (error?.code !== DUPLICATE_KEY_ERROR) {
         throw error
@@ -268,20 +338,6 @@ export async function savePayload(db, payload, logger) {
   )
 
   return { record, stored: false }
-}
-
-/**
- * Every stored payload, newest first — what the dashboard renders. One
- * document is kept per (repository, prNumber), so this needs no rollup.
- */
-export async function findLatestPayloads(db) {
-  const docs = await db
-    .collection(PAYLOADS_COLLECTION)
-    .find({})
-    .sort({ calculatedAt: -1 })
-    .toArray()
-
-  return docs.map(toPayload)
 }
 
 /**
@@ -316,7 +372,8 @@ export async function findLatestPayloadForPr(db, repository, prNumber) {
  * minutes and would describe a commit set that is still changing; once merged
  * the commit list is final and a correction is meaningful. The change is also
  * kept in `classificationOverrides` so a late-arriving producer message
- * cannot silently revert it.
+ * cannot silently revert it. Attribution is an independent signal and is left
+ * unchanged by a re-classification.
  */
 export async function updateCommitClassification(
   db,

@@ -55,3 +55,33 @@ export function buildPayload(overrides = {}) {
     ...overrides
   }
 }
+
+export function buildAttribution(overrides = {}) {
+  return { source: 'legacy-trailer', ...overrides }
+}
+
+/** A valid contract v2 payload; `buildPayload` stays the v1 shape. */
+export function buildPayloadV2(overrides = {}) {
+  const base = buildPayload()
+
+  return {
+    ...base,
+    schemaVersion: 2,
+    source: 'live',
+    prTitle: 'MMO-123 Add cycle time scatter',
+    jiraKeys: ['MMO-123'],
+    files: {
+      changed: 3,
+      linesTouched: 180,
+      testFilesChanged: 1,
+      testLinesTouched: 40,
+      modulesTouched: 2,
+      excluded: { filesChanged: 1, linesTouched: 20 }
+    },
+    commitBreakdown: base.commitBreakdown.map((commit) => ({
+      ...commit,
+      attribution: buildAttribution()
+    })),
+    ...overrides
+  }
+}

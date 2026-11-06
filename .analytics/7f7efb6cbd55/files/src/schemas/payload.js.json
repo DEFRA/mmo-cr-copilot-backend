@@ -1,0 +1,32 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/schemas/payload.js",
+  "added": 13,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 13,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "111-116,118-119,121-122,133,138-139"
+  },
+  "ai": [
+    [111, "a", "620915d4", 0],
+    [112, "a", "590ffdb8", 0],
+    [113, "a", "f59a7650", 0],
+    [114, "a", "393ea090", 0],
+    [115, "a", "c87e09e6", 0],
+    [116, "a", "0fdecd0f", 0],
+    [118, "a", "5abbde17", 0],
+    [119, "a", "14dd0175", 0],
+    [121, "a", "e1214a74", 0],
+    [122, "a", "fd435778", 0],
+    [133, "a", "07d16ff5", 0],
+    [138, "a", "6790d4bb", 0],
+    [139, "a", "da581adf", 0]
+  ]
+}

@@ -1,11 +1,37 @@
+# OS / editor
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Dependencies and caches
+node_modules/
 .npm/
-.vscode
-.idea
-.server
-node_modules
-npm-debug.log
-coverage
-.cache
+.cache/
 .eslintcache
+.server/
+*.tsbuildinfo
+
+# Secrets
 .env
+.env.*
+!.env.example
+
+# Test and coverage output
+coverage/
+.nyc_output/
+test-results/
+testResults.xml
+junit.xml
+*.lcov
+
+# Logs and temporary files
+*.log
+npm-debug.log*
+*.tmp
+*.bak
+*.swp
+
+# Docs: only ADRs are committed
+docs/*
+!docs/adr/
