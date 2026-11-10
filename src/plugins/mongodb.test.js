@@ -303,6 +303,17 @@ describe('#mongoDb', () => {
       expect(project).not.toHaveProperty('entraGroupIds')
     })
 
+    test('Should index unresolved Jira keys uniquely and expire them after a day', async () => {
+      const indexes = await db.collection('jira-unresolved-keys').indexes()
+
+      expect(indexes.find((index) => index.name === 'key_1')).toMatchObject({
+        unique: true
+      })
+      expect(
+        indexes.find((index) => index.name === 'checkedAt_1')
+      ).toMatchObject({ expireAfterSeconds: 86400 })
+    })
+
     test('Should create the default project as CRAR on an empty database', async () => {
       await db.collection('projects').deleteMany({})
 
@@ -313,7 +324,8 @@ describe('#mongoDb', () => {
         expect.objectContaining({
           slug: 'CRAR',
           type: 'ai-native',
-          adoptionStartDate: null
+          adoptionStartDate: null,
+          jira: { projectKeys: ['MMOCR'] }
         })
       ])
     })

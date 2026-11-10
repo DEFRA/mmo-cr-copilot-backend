@@ -252,6 +252,18 @@ export const config = convict({
       default: 300000,
       env: 'SONAR_CACHE_TTL_MS'
     },
+    lazyGateBudgetMs: {
+      doc: 'How long delivery metrics wait for missing SonarCloud PR quality gates',
+      format: 'nat',
+      default: 2500,
+      env: 'SONAR_LAZY_GATE_BUDGET_MS'
+    },
+    lazyGateMaxPrs: {
+      doc: 'Most SonarCloud PR quality gates fetched by one delivery metrics request',
+      format: 'nat',
+      default: 50,
+      env: 'SONAR_LAZY_GATE_MAX_PRS'
+    },
     snapshotFallback: {
       doc: 'Local development only: serve /api/sonar/* from stored snapshots instead of SonarCloud (ADR 0006)',
       format: Boolean,
@@ -286,11 +298,23 @@ export const config = convict({
       default: 10000,
       env: 'JIRA_REQUEST_TIMEOUT_MS'
     },
-    syncIntervalMinutes: {
-      doc: 'Minutes between incremental Jira syncs of every project with Jira keys; 0 turns the scheduled sync off',
+    freshnessMinutes: {
+      doc: 'A stored Jira issue not yet Done is fetched again when its window is viewed and it is older than this',
       format: 'nat',
       default: 15,
-      env: 'JIRA_SYNC_INTERVAL_MINUTES'
+      env: 'JIRA_FRESHNESS_MINUTES'
+    },
+    lazyFetchBudgetMs: {
+      doc: 'How long a metrics request waits for Jira before serving stored issues; the fetch carries on in the background',
+      format: 'nat',
+      default: 5000,
+      env: 'JIRA_LAZY_FETCH_BUDGET_MS'
+    },
+    lazyFetchMaxKeys: {
+      doc: 'Most Jira issues fetched by one metrics request (parents counted separately)',
+      format: 'nat',
+      default: 300,
+      env: 'JIRA_LAZY_FETCH_MAX_KEYS'
     }
   }
 })

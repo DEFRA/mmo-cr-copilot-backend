@@ -62,6 +62,7 @@ describe('#mock data fixtures', () => {
     let server
     let db
     let computeDeliveryMetrics
+    let savedProjects
 
     beforeAll(async () => {
       // Dynamic imports: config must be read after vitest-mongodb sets MONGO_URI
@@ -81,6 +82,18 @@ describe('#mock data fixtures', () => {
       ]) {
         await db.collection(name).deleteMany({})
       }
+      // Metrics read only PR-referenced issues within the project's Jira keys.
+      savedProjects = await db
+        .collection('projects')
+        .find({ slug: { $in: ['FES', 'CRAR'] } })
+        .toArray()
+      await db
+        .collection('projects')
+        .deleteMany({ slug: { $in: ['FES', 'CRAR'] } })
+      await db.collection('projects').insertMany([
+        { slug: 'FES', archivedAt: null, jira: { projectKeys: ['MMOCR'] } },
+        { slug: 'CRAR', archivedAt: null, jira: { projectKeys: ['AGENT'] } }
+      ])
       await db
         .collection('jira-issues')
         .insertMany(structuredClone(JIRA_ISSUES))
@@ -103,9 +116,33 @@ describe('#mock data fixtures', () => {
       await db
         .collection('pr-jira-links')
         .insertMany(buildPrJiraLinks(JIRA_SCENARIO_PAYLOAD_SPECS))
+      // Tickets the full seed links through its other payloads.
+      await db.collection('pr-jira-links').insertMany(
+        [
+          'MMOCR-101',
+          'MMOCR-102',
+          'MMOCR-103',
+          'MMOCR-104',
+          'MMOCR-105',
+          'MMOCR-106',
+          'AGENT-201'
+        ].map((jiraKey, i) => ({
+          projectSlug: jiraKey.startsWith('AGENT') ? 'CRAR' : 'FES',
+          jiraKey,
+          repository: 'DEFRA/seed-history',
+          prNumber: 500 + i,
+          source: 'manual'
+        }))
+      )
     })
 
     afterAll(async () => {
+      await db
+        .collection('projects')
+        .deleteMany({ slug: { $in: ['FES', 'CRAR'] } })
+      if (savedProjects.length > 0) {
+        await db.collection('projects').insertMany(savedProjects)
+      }
       await server.stop({ timeout: 1000 })
     })
 

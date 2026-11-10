@@ -45,7 +45,12 @@ describe('#jira-workflow routes', () => {
   })
 
   beforeEach(async () => {
-    for (const name of ['projects', 'audit-logs', 'jira-issues']) {
+    for (const name of [
+      'projects',
+      'audit-logs',
+      'jira-issues',
+      'pr-jira-links'
+    ]) {
       await db.collection(name).deleteMany({})
     }
     await db.collection('projects').insertMany([
@@ -120,6 +125,23 @@ describe('#jira-workflow routes', () => {
         detectedCount: 2
       })
       expect(result.stages[0].statuses).toEqual(['Funnel'])
+    })
+
+    test('Should report detectedAt from detectedStatusesAt', async () => {
+      await db.collection('projects').updateOne(
+        { slug: 'ALPH' },
+        {
+          $set: {
+            'jira.lastSyncedAt': new Date('2026-11-05T08:00:00Z'),
+            'jira.detectedStatusesAt': new Date('2026-11-09T08:00:00Z'),
+            'jira.detectedStatuses': [{ name: 'Done', categoryKey: 'done' }]
+          }
+        }
+      )
+
+      const { result } = await get(admin)
+
+      expect(result.detectedAt).toBe('2026-11-09T08:00:00.000Z')
     })
 
     test('Should hide the workflow from a project user', async () => {
@@ -217,9 +239,16 @@ describe('#jira-workflow routes', () => {
     })
 
     test('Should apply the saved workflow to delivery metrics and Jira issues', async () => {
+      await db.collection('pr-jira-links').insertOne({
+        projectSlug: 'ALPH',
+        jiraKey: 'ALPH-1',
+        repository: 'DEFRA/r',
+        prNumber: 1
+      })
       await db.collection('jira-issues').insertOne({
         key: 'ALPH-1',
         projectSlug: 'ALPH',
+        issueType: 'Story',
         status: { name: 'Shipped', categoryKey: 'indeterminate' },
         created: new Date('2026-10-01T09:00:00Z'),
         statusHistory: [
@@ -329,6 +358,12 @@ describe('#jira-workflow routes', () => {
     })
 
     test('Should list stored statuses when Jira is not configured', async () => {
+      await db.collection('pr-jira-links').insertOne({
+        projectSlug: 'ALPH',
+        jiraKey: 'ALPH-1',
+        repository: 'DEFRA/r',
+        prNumber: 1
+      })
       await db.collection('jira-issues').insertOne({
         key: 'ALPH-1',
         projectSlug: 'ALPH',

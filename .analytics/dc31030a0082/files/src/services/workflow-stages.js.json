@@ -1,0 +1,33 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/services/workflow-stages.js",
+  "added": 14,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 14,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "341,344,448-455,517,521-522,527"
+  },
+  "ai": [
+    [341, "a", "18cdec96", 0],
+    [344, "a", "cc405fcb", 0],
+    [448, "a", "34625dd4", 0],
+    [449, "a", "61d7a7d4", 0],
+    [450, "a", "c4f65158", 0],
+    [451, "a", "6b37fbb5", 0],
+    [452, "a", "da385b5b", 0],
+    [453, "a", "c920a557", 0],
+    [454, "a", "843d7fea", 0],
+    [455, "a", "ce19d6d5", 0],
+    [517, "a", "ed4d4355", 0],
+    [521, "a", "36b40d80", 0],
+    [522, "a", "55c02b67", 0],
+    [527, "a", "91f14dc1", 0]
+  ]
+}

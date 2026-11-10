@@ -29,10 +29,13 @@ describe('#project schemas', () => {
     )
 
     test('Should default the Jira block to no keys', () => {
-      expect(create().value.jira).toEqual({
-        projectKeys: [],
-        storyPointsField: 'customfield_10016'
-      })
+      expect(create().value.jira).toEqual({ projectKeys: [] })
+    })
+
+    test('Should reject a story points field that is not a custom field id', () => {
+      const { error } = create({ jira: { storyPointsField: 'Story Points' } })
+
+      expect(error.details[0].type).toBe('string.pattern.base')
     })
 
     test('Should accept one Jira key and reject two', () => {
@@ -92,6 +95,15 @@ describe('#project schemas', () => {
       })
 
       expect(error.details[0].type).toBe('array.max')
+    })
+
+    test('Should accept null on update to restore detection', () => {
+      const { error, value } = projectUpdateSchema.validate({
+        jira: { storyPointsField: null }
+      })
+
+      expect(error).toBeUndefined()
+      expect(value).toEqual({ jira: { storyPointsField: null } })
     })
   })
 

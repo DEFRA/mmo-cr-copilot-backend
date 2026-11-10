@@ -14,7 +14,7 @@ import {
   assertRepositoryRole
 } from '#/common/helpers/project-access.js'
 import { recordAuditEvent } from '#/services/audit-logs.js'
-import { fetchUnknownJiraIssues } from '#/plugins/jira-sync.js'
+import { fetchUnknownJiraIssues } from '#/services/jira-lazy-fetch.js'
 import {
   CLASSIFICATION_UPDATE,
   findPayloadHistory,

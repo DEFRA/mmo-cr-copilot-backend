@@ -29,7 +29,8 @@ const isBug = (issue) => /bug|defect/i.test(issue?.issueType ?? '')
 /**
  * Flow metrics for tickets Done in a window. Every issue carries `flow`
  * (workflow-stages.js); `prsByKey` maps a ticket key to its linked PR
- * payloads; `scopes` are sprint scopes captured at sprint start.
+ * payloads; `scopes` are sprint scopes captured at sprint start; only keys
+ * among `issues` count as committed.
  */
 export function computeFlowMetrics({
   done,
@@ -94,7 +95,7 @@ export function computeFlowMetrics({
     // A sprint belongs to the window its end falls in: (from, to].
     if (from && end <= toTime(from)) continue
     if (to && end > toTime(to)) continue
-    const keys = scope.issueKeys ?? []
+    const keys = (scope.issueKeys ?? []).filter((key) => byKey.has(key))
     const doneByEnd = keys.filter((key) => {
       const at = firstDoneTime(byKey.get(key))
       return Number.isFinite(at) && at <= end

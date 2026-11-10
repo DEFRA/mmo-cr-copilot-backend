@@ -1,0 +1,21 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/services/flow-metrics.test.js",
+  "added": 2,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 2,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "190,202"
+  },
+  "ai": [
+    [190, "a", "5fe52487", 0],
+    [202, "a", "1eca973d", 0]
+  ]
+}

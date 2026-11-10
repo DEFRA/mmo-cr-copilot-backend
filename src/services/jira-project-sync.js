@@ -1,3 +1,4 @@
+import { JIRA_ISSUES_COLLECTION } from '#/services/jira.js'
 import { detectProjectStatuses } from '#/services/jira-workflow.js'
 import { PROJECTS_COLLECTION } from '#/services/projects.js'
 
@@ -47,7 +48,8 @@ export async function captureSprintScope({ db, client, project }) {
 
 /**
  * Syncs one project's issues, sprint scope and detected statuses, then moves
- * `lastSyncedAt` on. Incremental from the last sync unless `full` is set.
+ * `lastSyncedAt` on. Incremental from the last sync unless `full` is set or
+ * nothing is stored for the project yet.
  */
 export async function syncOneProject({
   db,
@@ -58,7 +60,13 @@ export async function syncOneProject({
 }) {
   const startedAt = new Date()
   const jira = project.jira ?? {}
-  const lastSyncedAt = full ? null : jira.lastSyncedAt
+  const hasIssues =
+    !full &&
+    jira.lastSyncedAt &&
+    (await db
+      .collection(JIRA_ISSUES_COLLECTION)
+      .findOne({ projectSlug: project.slug }, { projection: { _id: 1 } }))
+  const lastSyncedAt = hasIssues ? jira.lastSyncedAt : null
   const result = await client.syncProjectIssues(
     db,
     project.slug,

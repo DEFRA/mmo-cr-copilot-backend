@@ -76,6 +76,9 @@ export async function createProject(db, projectData) {
   if (projectData.adoptionStartDate) {
     document.adoptionStartDate = toDate(projectData.adoptionStartDate)
   }
+  if (document.jira?.storyPointsField) {
+    document.jira = { ...document.jira, storyPointsFieldSource: 'admin' }
+  }
   try {
     await db.collection(PROJECTS_COLLECTION).insertOne(document)
   } catch (error) {
@@ -98,6 +101,14 @@ export async function updateProject(db, slug, updateData) {
   // Per-field paths, so sync-owned fields such as jira.lastSyncedAt survive an edit.
   for (const [key, value] of Object.entries(jira ?? {})) {
     $set[`jira.${key}`] = value
+  }
+  // An admin's field wins over detection; null hands the choice back to detection.
+  if (jira && Object.hasOwn(jira, 'storyPointsField')) {
+    $set['jira.storyPointsFieldSource'] =
+      jira.storyPointsField === null ? null : 'admin'
+    if (jira.storyPointsField === null) {
+      $set['jira.storyPointsFieldDetectedAt'] = null
+    }
   }
   if (updateData.adoptionStartDate !== undefined) {
     $set.adoptionStartDate = updateData.adoptionStartDate

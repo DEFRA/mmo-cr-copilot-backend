@@ -34,7 +34,7 @@ function presentWorkflow(project) {
     updatedAt: toIso(workflow.updatedAt),
     updatedBy: workflow.updatedBy,
     detectedAt: Array.isArray(detected)
-      ? toIso(project.jira?.lastSyncedAt)
+      ? toIso(project.jira?.detectedStatusesAt ?? project.jira?.lastSyncedAt)
       : null,
     detectedCount: Array.isArray(detected) ? detected.length : 0,
     stages: workflow.stages,

@@ -33,8 +33,9 @@ import {
   listProjects,
   updateProject
 } from '#/services/projects.js'
-import { listProjectJiraIssues } from '#/services/jira.js'
-import { syncOneProject } from '#/services/jira-project-sync.js'
+import { listProjectJiraIssues } from '#/services/jira-scope.js'
+import { ensureJiraWindowFresh } from '#/services/jira-lazy-fetch.js'
+import { ensurePrQualityGates } from '#/services/sonar-pr-gates.js'
 import { findPrLinks, setManualPrLinks } from '#/services/pr-jira-links.js'
 import { recordAuditEvent } from '#/services/audit-logs.js'
 import {
@@ -338,12 +339,29 @@ export const projectsRoutes = [
         throw Boom.notFound(`Project '${request.params.slug}' not found`)
       }
       assertProjectRole(request, project)
+      const jira = await ensureJiraWindowFresh({
+        db: request.db,
+        client: request.server.jira,
+        project,
+        from: request.query.from,
+        to: request.query.to,
+        logger: request.logger
+      })
       const metrics = await computeDeliveryMetrics(
         request.db,
         request.params.slug,
-        request.query
+        request.query,
+        {
+          prGates: (prs) =>
+            ensurePrQualityGates({
+              db: request.db,
+              sonar: request.server.sonar,
+              prs,
+              logger: request.logger
+            })
+        }
       )
-      return h.response(metrics)
+      return h.response({ ...metrics, jira })
     }
   },
   {
@@ -360,37 +378,8 @@ export const projectsRoutes = [
         throw Boom.notFound(`Project '${request.params.slug}' not found`)
       }
       assertProjectRole(request, project)
-      const issues = await listProjectJiraIssues(
-        request.db,
-        request.params.slug,
-        project
-      )
+      const issues = await listProjectJiraIssues(request.db, project)
       return h.response({ issues })
-    }
-  },
-  {
-    method: 'POST',
-    path: '/api/projects/{slug}/jira/sync',
-    options: {
-      validate: {
-        params: projectSlugParamSchema
-      }
-    },
-    handler: async (request, h) => {
-      requireDashboardAdmin(request)
-      const project = await findProject(request.db, request.params.slug)
-      if (!project || project.archivedAt) {
-        throw Boom.notFound(`Project '${request.params.slug}' not found`)
-      }
-      // A manual sync is full, so it also repairs histories stored before a fix.
-      const result = await syncOneProject({
-        db: request.db,
-        client: request.server.jira,
-        project,
-        logger: request.logger,
-        full: true
-      })
-      return h.response(result)
     }
   },
   {
@@ -439,7 +428,15 @@ export const projectsRoutes = [
       }
     },
     handler: async (request, h) => {
-      await readableProject(request)
+      const project = await readableProject(request)
+      await ensureJiraWindowFresh({
+        db: request.db,
+        client: request.server.jira,
+        project,
+        from: request.query.from,
+        to: request.query.to,
+        logger: request.logger
+      })
       return h.response(
         await computeAiNativeDeliveryLeverage(
           request.db,

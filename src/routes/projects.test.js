@@ -623,7 +623,6 @@ describe('#projects routes', () => {
         .findOne({ slug: 'PUTT' })
       expect(stored.jira).toEqual({
         projectKeys: ['PUTT'],
-        storyPointsField: 'customfield_10016',
         boardId: 7,
         lastSyncedAt,
         statusMapping: { Done: 'done' },
@@ -633,77 +632,14 @@ describe('#projects routes', () => {
   })
 
   describe('POST /api/projects/{slug}/jira/sync', () => {
-    const sync = (slug = 'SYNC', headers = adminHeaders) =>
-      server.inject({
+    test('Should no longer offer a Jira sync route', async () => {
+      const { statusCode } = await server.inject({
         method: 'POST',
-        url: `/api/projects/${slug}/jira/sync`,
-        headers
+        url: '/api/projects/SYNC/jira/sync',
+        headers: adminHeaders
       })
 
-    beforeEach(async () => {
-      await db.collection(PROJECTS_COLLECTION).insertOne({
-        slug: 'SYNC',
-        name: 'Sync',
-        type: 'ai-adopted',
-        archivedAt: null,
-        jira: {
-          projectKeys: ['SYNC'],
-          storyPointsField: 'customfield_1',
-          lastSyncedAt: new Date('2026-10-01T09:00:00Z')
-        }
-      })
-    })
-
-    afterEach(() => {
-      vi.restoreAllMocks()
-    })
-
-    test('Should run a full sync on the shared client and store detected statuses', async () => {
-      const syncProjectIssues = vi
-        .spyOn(server.jira, 'syncProjectIssues')
-        .mockResolvedValue({ synced: 3, configured: true })
-      vi.spyOn(server.jira, 'getProjectStatuses').mockResolvedValue([
-        { name: 'To Do', categoryKey: 'new', issueType: 'Story' },
-        { name: 'Done', categoryKey: 'done', issueType: 'Story' }
-      ])
-      const before = Date.now()
-
-      const { statusCode, result } = await sync()
-
-      expect(statusCode).toBe(200)
-      expect(result).toEqual({ synced: 3, configured: true })
-      expect(syncProjectIssues).toHaveBeenCalledWith(
-        db,
-        'SYNC',
-        ['SYNC'],
-        'customfield_1',
-        {}
-      )
-      const { jira } = await db
-        .collection(PROJECTS_COLLECTION)
-        .findOne({ slug: 'SYNC' })
-      expect(jira.detectedStatuses).toEqual([
-        { name: 'To Do', categoryKey: 'new' },
-        { name: 'Done', categoryKey: 'done' }
-      ])
-      expect(jira.lastSyncedAt.getTime()).toBeGreaterThanOrEqual(before)
-    })
-
-    test('Should leave the project alone when Jira is not configured', async () => {
-      const { statusCode, result } = await sync()
-
-      expect(statusCode).toBe(200)
-      expect(result).toMatchObject({ synced: 0, configured: false })
-      const { jira } = await db
-        .collection(PROJECTS_COLLECTION)
-        .findOne({ slug: 'SYNC' })
-      expect(jira.lastSyncedAt).toEqual(new Date('2026-10-01T09:00:00Z'))
-      expect(jira.detectedStatuses).toBeUndefined()
-    })
-
-    test('Should refuse a non-admin and a missing project', async () => {
-      expect((await sync('SYNC', projectAdminHeaders)).statusCode).toBe(403)
-      expect((await sync('MISS')).statusCode).toBe(404)
+      expect(statusCode).toBe(404)
     })
   })
 

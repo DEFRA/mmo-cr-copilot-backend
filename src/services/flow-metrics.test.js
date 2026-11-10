@@ -187,7 +187,7 @@ describe('#flow-metrics', () => {
     expect(base({ done: [bug], issues: [bug] }).defectRecoveryTimeDays).toBe(4)
   })
 
-  test('Should count a ticket with no first Done as not done by sprint end', () => {
+  test('Should count only committed tickets among the issues, and none without a first Done', () => {
     const stories = [
       done('A-1', {}, { firstDoneAt: at(5) }),
       done('A-2', {}, { firstDoneAt: null })
@@ -199,6 +199,6 @@ describe('#flow-metrics', () => {
       scopes: [{ name: 'S', endDate: at(8), issueKeys: ['A-1', 'A-2', 'A-9'] }]
     })
 
-    expect(result.sprints[0]).toMatchObject({ committed: 3, done: 1 })
+    expect(result.sprints[0]).toMatchObject({ committed: 2, done: 1 })
   })
 })

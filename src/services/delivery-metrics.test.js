@@ -9,6 +9,7 @@ const issue = (key, overrides = {}) => {
   return {
     key,
     projectSlug: PROJECT,
+    issueType: 'Story',
     status: { name: 'Done', categoryKey: 'done' },
     created: new Date('2026-01-05T09:00:00Z'),
     resolved,
@@ -56,11 +57,24 @@ describe('#computeDeliveryMetrics', () => {
     await server.stop({ timeout: 1000 })
   })
 
+  // Metrics select only issues a PR references, so fixtures link them by key.
+  const referenceKeys = (...keys) =>
+    db.collection('pr-jira-links').insertMany(
+      keys.map((jiraKey, i) => ({
+        projectSlug: PROJECT,
+        jiraKey,
+        repository: 'DEFRA/history',
+        prNumber: 900 + i,
+        source: 'manual'
+      }))
+    )
+
   beforeEach(async () => {
     for (const name of [
       'jira-issues',
       'pr-jira-links',
       'payloads',
+      'projects',
       'repositories',
       'sonar-pr-snapshots',
       'ai_survival'
@@ -70,16 +84,20 @@ describe('#computeDeliveryMetrics', () => {
     await db
       .collection('repositories')
       .insertOne({ fullName: 'DEFRA/repo', projectSlug: PROJECT })
+    await db
+      .collection('projects')
+      .insertOne({ slug: PROJECT, jira: { projectKeys: ['PROJ'] } })
   })
 
   test('Should count only Done issues resolved in the window', async () => {
     await db.collection('jira-issues').insertMany([
-      issue('P-1'),
-      issue('P-2', { resolved: new Date('2026-03-01T00:00:00Z') }),
-      issue('P-3', {
+      issue('PROJ-1'),
+      issue('PROJ-2', { resolved: new Date('2026-03-01T00:00:00Z') }),
+      issue('PROJ-3', {
         status: { name: 'In Progress', categoryKey: 'indeterminate' }
       })
     ])
+    await referenceKeys('PROJ-1', 'PROJ-2', 'PROJ-3')
 
     const result = await computeDeliveryMetrics(db, PROJECT, {
       from: '2026-01-01T00:00:00Z',
@@ -94,7 +112,7 @@ describe('#computeDeliveryMetrics', () => {
   test('Should report the share of delivered stories that were reopened', async () => {
     const day = (d) => new Date(Date.UTC(2026, 0, d, 9))
     await db.collection('jira-issues').insertMany([
-      issue('P-1', {
+      issue('PROJ-1', {
         statusHistory: [
           { at: day(6), from: 'To Do', to: 'In Progress' },
           { at: day(8), from: 'In Progress', to: 'Done' },
@@ -102,10 +120,11 @@ describe('#computeDeliveryMetrics', () => {
           { at: day(10), from: 'In Progress', to: 'Done' }
         ]
       }),
-      issue('P-2'),
-      issue('P-3'),
-      issue('P-4')
+      issue('PROJ-2'),
+      issue('PROJ-3'),
+      issue('PROJ-4')
     ])
+    await referenceKeys('PROJ-1', 'PROJ-2', 'PROJ-3', 'PROJ-4')
 
     const result = await computeDeliveryMetrics(db, PROJECT)
 
@@ -113,24 +132,28 @@ describe('#computeDeliveryMetrics', () => {
   })
 
   test('Should warn about Done tickets whose linked PR is not merged', async () => {
-    await db.collection('jira-issues').insertMany([issue('P-1'), issue('P-2')])
+    await db
+      .collection('jira-issues')
+      .insertMany([issue('PROJ-1'), issue('PROJ-2')])
     await db.collection('payloads').insertMany([
-      payload(1, { jiraKeys: ['P-1'] }),
+      payload(1, { jiraKeys: ['PROJ-1'] }),
       payload(2, {
-        jiraKeys: ['P-2'],
+        jiraKeys: ['PROJ-2'],
         prMergedAt: new Date('2026-01-09T10:00:00Z')
       })
     ])
 
     const result = await computeDeliveryMetrics(db, PROJECT)
 
-    expect(result.warnings).toEqual([{ key: 'P-1', type: 'done-with-open-pr' }])
+    expect(result.warnings).toEqual([
+      { key: 'PROJ-1', type: 'done-with-open-pr' }
+    ])
   })
 
   test('Should rate PRs without a Jira key as unlinked', async () => {
     await db
       .collection('payloads')
-      .insertMany([payload(1, { jiraKeys: ['P-1'] }), payload(2)])
+      .insertMany([payload(1, { jiraKeys: ['PROJ-1'] }), payload(2)])
 
     const result = await computeDeliveryMetrics(db, PROJECT)
 
@@ -147,6 +170,181 @@ describe('#computeDeliveryMetrics', () => {
       firstScanPassRate: 0,
       standardDeployableUnits: 0,
       warnings: []
+    })
+  })
+
+  describe('PR-scoped Story unit (ADR 0012)', () => {
+    const merged = new Date('2026-01-09T09:00:00Z')
+    const linked = (prNumber, keys, extra = {}) =>
+      payload(prNumber, { jiraKeys: keys, prMergedAt: merged, ...extra })
+
+    test('Should ignore stored issues no PR references', async () => {
+      await db
+        .collection('jira-issues')
+        .insertMany([issue('PROJ-1'), issue('PROJ-2'), issue('PROJ-3')])
+      await db.collection('payloads').insertOne(linked(1, ['PROJ-1']))
+
+      const result = await computeDeliveryMetrics(db, PROJECT)
+
+      expect(result.storiesDelivered).toBe(1)
+    })
+
+    test('Should count a Sub-task PR toward its parent Story and take points from the Story', async () => {
+      await db.collection('jira-issues').insertMany([
+        issue('PROJ-10', { storyPoints: 5 }),
+        issue('PROJ-11', {
+          issueType: 'Sub-task',
+          parentKey: 'PROJ-10',
+          parentIssueType: 'Story',
+          storyPoints: null
+        })
+      ])
+      await db.collection('payloads').insertOne(linked(1, ['PROJ-11']))
+
+      const result = await computeDeliveryMetrics(db, PROJECT)
+
+      expect(result.storiesDelivered).toBe(1)
+      expect(result.storyPointsDelivered).toBe(5)
+      expect(result.otherItemsDelivered).toBe(0)
+    })
+
+    test('Should count a Task with no Story parent as another item', async () => {
+      await db
+        .collection('jira-issues')
+        .insertOne(issue('PROJ-1', { issueType: 'Task' }))
+      await db.collection('payloads').insertOne(linked(1, ['PROJ-1']))
+
+      const result = await computeDeliveryMetrics(db, PROJECT)
+
+      expect(result.storiesDelivered).toBe(0)
+      expect(result.otherItemsDelivered).toBe(1)
+    })
+
+    test('Should count PR-referenced Bugs separately', async () => {
+      await db
+        .collection('jira-issues')
+        .insertMany([issue('PROJ-1'), issue('PROJ-2', { issueType: 'Bug' })])
+      await db
+        .collection('payloads')
+        .insertMany([linked(1, ['PROJ-1']), linked(2, ['PROJ-2'])])
+
+      const result = await computeDeliveryMetrics(db, PROJECT)
+
+      expect(result.storiesDelivered).toBe(1)
+      expect(result.bugsDelivered).toBe(1)
+    })
+
+    test('Should not count an issue of another Jira project', async () => {
+      await db.collection('jira-issues').insertOne(issue('ABC-1'))
+      await db.collection('payloads').insertOne(linked(1, ['ABC-1']))
+
+      const result = await computeDeliveryMetrics(db, PROJECT)
+
+      expect(result.storiesDelivered).toBe(0)
+      expect(result.unlinkedPrRate).toBe(100)
+    })
+
+    test('Should count one story once when a PR references it and its sub-task', async () => {
+      await db.collection('jira-issues').insertMany([
+        issue('PROJ-10'),
+        issue('PROJ-11', {
+          issueType: 'Sub-task',
+          parentKey: 'PROJ-10',
+          parentIssueType: 'Story'
+        })
+      ])
+      const lines = [{ commit: 'c', linesAdded: 100, linesDeleted: 0 }]
+      await db
+        .collection('payloads')
+        .insertOne(linked(1, ['PROJ-10'], { commitBreakdown: lines }))
+      const single = await computeDeliveryMetrics(db, PROJECT)
+      await db.collection('payloads').deleteMany({})
+      await db
+        .collection('payloads')
+        .insertOne(
+          linked(1, ['PROJ-10', 'PROJ-11'], { commitBreakdown: lines })
+        )
+
+      const both = await computeDeliveryMetrics(db, PROJECT)
+
+      expect(both.storiesDelivered).toBe(1)
+      expect(both.qant).toBe(single.qant)
+    })
+
+    test('Should not deliver Closed - NLR under a saved mapping with Done only', async () => {
+      await db.collection('projects').updateOne(
+        { slug: PROJECT },
+        {
+          $set: {
+            'jira.statusMapping': {
+              version: 1,
+              stages: [
+                { id: 'todo', statuses: ['To Do'] },
+                { id: 'in-progress', statuses: ['In Progress'] },
+                { id: 'done', statuses: ['Done'] },
+                { id: 'cancelled', statuses: ['Closed - NLR'] }
+              ]
+            }
+          }
+        }
+      )
+      await db.collection('jira-issues').insertOne(
+        issue('PROJ-1', {
+          status: { name: 'Closed - NLR', categoryKey: 'done' },
+          statusHistory: [
+            {
+              at: new Date('2026-01-06T09:00:00Z'),
+              from: 'To Do',
+              to: 'In Progress'
+            },
+            {
+              at: new Date('2026-01-10T09:00:00Z'),
+              from: 'In Progress',
+              to: 'Closed - NLR'
+            }
+          ]
+        })
+      )
+      await db.collection('payloads').insertOne(linked(1, ['PROJ-1']))
+
+      const result = await computeDeliveryMetrics(db, PROJECT)
+
+      expect(result.storiesDelivered).toBe(0)
+    })
+
+    test('Should ask prGates for the PRs of Done stories and use the captured gate', async () => {
+      await db.collection('jira-issues').insertOne(issue('PROJ-1'))
+      await db.collection('payloads').insertOne(linked(1, ['PROJ-1']))
+      const prGates = vi.fn(async () => {
+        await db.collection('sonar-pr-snapshots').insertOne({
+          repository: 'DEFRA/repo',
+          prNumber: 1,
+          qualityGate: 'passed',
+          firstScanQualityGate: 'passed',
+          measures: {}
+        })
+        return { stale: false }
+      })
+
+      const result = await computeDeliveryMetrics(db, PROJECT, {}, { prGates })
+
+      expect(prGates).toHaveBeenCalledWith([
+        { repository: 'DEFRA/repo', prNumber: 1 }
+      ])
+      expect(result.standardDeployableUnits).toBe(1)
+      expect(result.firstScanPassRate).toBe(100)
+      expect(result.sonar).toEqual({ stale: false })
+    })
+
+    test('Should report sonar stale when gates could not all be captured', async () => {
+      const result = await computeDeliveryMetrics(
+        db,
+        PROJECT,
+        {},
+        { prGates: async () => ({ stale: true }) }
+      )
+
+      expect(result.sonar.stale).toBe(true)
     })
   })
 
@@ -175,13 +373,6 @@ describe('#computeDeliveryMetrics', () => {
       )
     const window = { from: '2026-01-01T00:00:00Z', to: '2026-02-01T00:00:00Z' }
 
-    beforeEach(async () => {
-      await db.collection('projects').deleteMany({})
-      await db
-        .collection('projects')
-        .insertOne({ slug: PROJECT, jira: { projectKeys: ['PROJ'] } })
-    })
-
     test('Should deliver a story moved into a mapped Done status without a resolution', async () => {
       await saveMapping({
         todo: ['To Do'],
@@ -189,7 +380,7 @@ describe('#computeDeliveryMetrics', () => {
         done: ['Completed']
       })
       await db.collection('jira-issues').insertOne(
-        issue('P-1', {
+        issue('PROJ-1', {
           status: { name: 'Completed', categoryKey: 'indeterminate' },
           resolved: null,
           created: at(1),
@@ -200,6 +391,7 @@ describe('#computeDeliveryMetrics', () => {
           )
         })
       )
+      await referenceKeys('PROJ-1')
 
       const result = await computeDeliveryMetrics(db, PROJECT, window)
 
@@ -220,11 +412,12 @@ describe('#computeDeliveryMetrics', () => {
         done: ['Done']
       })
       await db.collection('jira-issues').insertOne(
-        issue('P-1', {
+        issue('PROJ-1', {
           created: at(1),
           statusHistory: moves([1, 'Selected'], [5, 'Building'], [6, 'Done'])
         })
       )
+      await referenceKeys('PROJ-1')
 
       const result = await computeDeliveryMetrics(db, PROJECT, window)
 
@@ -232,12 +425,13 @@ describe('#computeDeliveryMetrics', () => {
     })
 
     test('Should not deliver a cancelled story', async () => {
-      await db
-        .collection('jira-issues')
-        .insertMany([
-          issue('P-1'),
-          issue('P-2', { status: { name: 'Cancelled', categoryKey: 'done' } })
-        ])
+      await db.collection('jira-issues').insertMany([
+        issue('PROJ-1'),
+        issue('PROJ-2', {
+          status: { name: 'Cancelled', categoryKey: 'done' }
+        })
+      ])
+      await referenceKeys('PROJ-1', 'PROJ-2')
 
       const result = await computeDeliveryMetrics(db, PROJECT, window)
 
@@ -259,12 +453,13 @@ describe('#computeDeliveryMetrics', () => {
         }
       )
       await db.collection('jira-issues').insertOne(
-        issue('P-1', {
+        issue('PROJ-1', {
           status: { name: 'Served', categoryKey: '' },
           created: at(1),
           statusHistory: moves([1, 'Funnel'], [4, 'Cooking'], [6, 'Served'])
         })
       )
+      await referenceKeys('PROJ-1')
 
       const result = await computeDeliveryMetrics(db, PROJECT, window)
 
@@ -275,14 +470,15 @@ describe('#computeDeliveryMetrics', () => {
 
     test('Should list statuses outside every stage with their issue counts', async () => {
       await db.collection('jira-issues').insertMany([
-        issue('P-1', {
+        issue('PROJ-1', {
           statusHistory: moves([1, 'To Do'], [2, 'Funnel'], [4, 'Done'])
         }),
-        issue('P-2', {
+        issue('PROJ-2', {
           status: { name: 'Funnel', categoryKey: '' },
           statusHistory: moves([1, 'To Do'], [2, 'Funnel'])
         })
       ])
+      await referenceKeys('PROJ-1', 'PROJ-2')
 
       const result = await computeDeliveryMetrics(db, PROJECT)
 
@@ -305,10 +501,10 @@ describe('#computeDeliveryMetrics', () => {
       })
 
     test('Should divide each story’s quality lines by its PR complexity, per cycle day', async () => {
-      await db.collection('jira-issues').insertOne(issue('P-1'))
+      await db.collection('jira-issues').insertOne(issue('PROJ-1'))
       await db
         .collection('payloads')
-        .insertOne(withLines(1, 100, 50, { jiraKeys: ['P-1'] }))
+        .insertOne(withLines(1, 100, 50, { jiraKeys: ['PROJ-1'] }))
 
       const res = await computeDeliveryMetrics(db, PROJECT)
 
@@ -320,12 +516,12 @@ describe('#computeDeliveryMetrics', () => {
     test('Should rate a more complex PR lower for the same lines', async () => {
       await db
         .collection('jira-issues')
-        .insertMany([issue('P-1'), issue('P-2')])
+        .insertMany([issue('PROJ-1'), issue('PROJ-2')])
       await db
         .collection('payloads')
         .insertMany([
-          withLines(1, 100, 10, { jiraKeys: ['P-1'] }),
-          withLines(2, 100, 90, { jiraKeys: ['P-2'] })
+          withLines(1, 100, 10, { jiraKeys: ['PROJ-1'] }),
+          withLines(2, 100, 90, { jiraKeys: ['PROJ-2'] })
         ])
 
       const simple = await computeDeliveryMetrics(db, PROJECT)
@@ -336,13 +532,13 @@ describe('#computeDeliveryMetrics', () => {
     test('Should leave a story with no complexity score out of both sums', async () => {
       await db
         .collection('jira-issues')
-        .insertMany([issue('P-1'), issue('P-2')])
+        .insertMany([issue('PROJ-1'), issue('PROJ-2')])
       await db.collection('payloads').insertMany([
-        withLines(1, 100, 50, { jiraKeys: ['P-1'] }),
+        withLines(1, 100, 50, { jiraKeys: ['PROJ-1'] }),
         payload(2, {
           prMergedAt: merged,
           commitBreakdown: [{ commit: 'x', linesAdded: 500, linesDeleted: 0 }],
-          jiraKeys: ['P-2']
+          jiraKeys: ['PROJ-2']
         })
       ])
 
@@ -352,13 +548,13 @@ describe('#computeDeliveryMetrics', () => {
     })
 
     test('Should derive the score from the files block when none is stored', async () => {
-      await db.collection('jira-issues').insertOne(issue('P-1'))
+      await db.collection('jira-issues').insertOne(issue('PROJ-1'))
       await db.collection('payloads').insertOne(
         payload(1, {
           prMergedAt: merged,
           commitBreakdown: [{ commit: 'c', linesAdded: 100, linesDeleted: 0 }],
           files: { linesTouched: 100, changed: 4, modulesTouched: 2 },
-          jiraKeys: ['P-1']
+          jiraKeys: ['PROJ-1']
         })
       )
 

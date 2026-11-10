@@ -1,7 +1,7 @@
 import Boom from '@hapi/boom'
 
 import { JIRA_PROJECT_KEY_PATTERN } from '#/schemas/project.js'
-import { JIRA_ISSUES_COLLECTION } from '#/services/jira.js'
+import { loadScopedIssues } from '#/services/jira-scope.js'
 import { PROJECTS_COLLECTION } from '#/services/projects.js'
 import {
   MAX_DETECTED_STATUSES,
@@ -99,31 +99,29 @@ export async function detectProjectStatuses(client, project, logger) {
   }
 }
 
-async function observedStatuses(db, projectSlug) {
-  const issues = db.collection(JIRA_ISSUES_COLLECTION)
-  const [current, historyTo, historyFrom] = await Promise.all([
-    issues
-      .aggregate([
-        { $match: { projectSlug } },
-        {
-          $group: {
-            _id: '$status.name',
-            categoryKey: { $first: '$status.categoryKey' },
-            issueCount: { $sum: 1 }
-          }
-        }
-      ])
-      .toArray(),
-    issues.distinct('statusHistory.to', { projectSlug }),
-    issues.distinct('statusHistory.from', { projectSlug })
-  ])
+async function observedStatuses(db, project) {
+  const { issues } = await loadScopedIssues(db, project)
+  const current = new Map()
+  const history = new Set()
+  for (const issue of issues) {
+    const name = issue.status?.name
+    if (name) {
+      const entry = current.get(name) ?? {
+        name,
+        categoryKey: issue.status.categoryKey,
+        issueCount: 0
+      }
+      entry.issueCount += 1
+      current.set(name, entry)
+    }
+    for (const change of issue.statusHistory ?? []) {
+      if (change.from) history.add(change.from)
+      if (change.to) history.add(change.to)
+    }
+  }
   return [
-    ...current.map((s) => ({
-      name: s._id,
-      categoryKey: s.categoryKey,
-      issueCount: s.issueCount
-    })),
-    ...[...historyTo, ...historyFrom].map((name) => ({ name, issueCount: 0 }))
+    ...current.values(),
+    ...[...history].map((name) => ({ name, issueCount: 0 }))
   ]
 }
 
@@ -149,7 +147,7 @@ async function liveJiraStatuses(project, client, logger) {
  */
 export async function listProjectStatuses(db, project, client, logger) {
   const [observed, live] = await Promise.all([
-    observedStatuses(db, project.slug),
+    observedStatuses(db, project),
     liveJiraStatuses(project, client, logger)
   ])
   const merged = new Map()

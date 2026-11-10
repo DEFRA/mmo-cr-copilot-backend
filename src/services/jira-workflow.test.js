@@ -33,6 +33,7 @@ describe('#jira-workflow service', () => {
     vi.clearAllMocks()
     await db.collection('projects').deleteMany({})
     await db.collection('jira-issues').deleteMany({})
+    await db.collection('pr-jira-links').deleteMany({})
     await db.collection('projects').insertOne({
       slug: SLUG,
       archivedAt: null,
@@ -178,7 +179,18 @@ describe('#jira-workflow service', () => {
       getProjectStatuses
     })
 
+    const linkIssues = (...keys) =>
+      db.collection('pr-jira-links').insertMany(
+        keys.map((jiraKey, i) => ({
+          projectSlug: SLUG,
+          jiraKey,
+          repository: 'DEFRA/r',
+          prNumber: i + 1
+        }))
+      )
+
     beforeEach(async () => {
+      await linkIssues('ALPH-1', 'ALPH-2')
       await db.collection('jira-issues').insertMany([
         {
           key: 'ALPH-1',
@@ -275,6 +287,7 @@ describe('#jira-workflow service', () => {
 
     test('Should drop a status name longer than the saveable maximum', async () => {
       const tooLong = 'x'.repeat(61)
+      await linkIssues('ALPH-3')
       await db.collection('jira-issues').insertOne({
         key: 'ALPH-3',
         projectSlug: SLUG,

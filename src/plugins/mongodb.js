@@ -160,6 +160,13 @@ async function createIndexes(db, logger) {
       { projectSlug: 1, jiraKey: 1, repository: 1, prNumber: 1 },
       { unique: true }
     )
+  // Keys Jira could not return are not asked for again until the entry expires.
+  await db
+    .collection('jira-unresolved-keys')
+    .createIndex({ key: 1 }, { unique: true })
+  await db
+    .collection('jira-unresolved-keys')
+    .createIndex({ checkedAt: 1 }, { expireAfterSeconds: 86400 })
 
   await migrateDefaultProject(db, logger)
   await removeProjectGroupFields(db, logger)
@@ -247,8 +254,7 @@ export async function migrateDefaultProject(db, logger) {
         anchorDate: new Date('2026-07-08T00:00:00.000Z')
       },
       jira: {
-        projectKeys: ['MMOCR'],
-        storyPointsField: 'customfield_10016'
+        projectKeys: ['MMOCR']
       },
       createdAt: new Date(),
       updatedAt: new Date(),

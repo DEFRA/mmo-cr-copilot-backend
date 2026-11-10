@@ -8,7 +8,7 @@ import { requestLogger } from '#/plugins/request-logger.js'
 import { mongoDb } from '#/plugins/mongodb.js'
 import { entraAuth } from '#/plugins/entra-auth.js'
 import { sonar } from '#/plugins/sonar.js'
-import { jiraSync } from '#/plugins/jira-sync.js'
+import { jira } from '#/plugins/jira.js'
 import { failAction } from '#/common/helpers/fail-action.js'
 import { pulse } from '#/plugins/pulse.js'
 import { requestTracing } from '#/plugins/request-tracing.js'
@@ -51,6 +51,7 @@ export async function createServer(options = {}) {
   // pulse           - provides shutdown handlers
   // mongoDb         - sets up mongo connection pool and attaches to `server` and `request` objects
   // sonar           - SonarCloud client attached to `server` and `request` objects
+  // jira            - Jira Cloud client attached to `server`
   // entraAuth       - default bearer-token auth strategy for every route
   // router          - routes used in the app
   await server.register([
@@ -65,7 +66,7 @@ export async function createServer(options = {}) {
       options: config.get('mongo')
     },
     sonar,
-    jiraSync,
+    jira,
     { plugin: entraAuth, options: { jwks: options.jwks } },
     router
   ])

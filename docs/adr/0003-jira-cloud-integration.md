@@ -1,6 +1,6 @@
 # 0003. Jira Cloud integration
 
-- **Status:** Accepted
+- **Status:** Accepted; sync, Done-by-category and storage scope superseded by [0012](0012-lazy-pr-scoped-jira-fetch.md)
 - **Date:** 2026-10-15
 
 ## Context

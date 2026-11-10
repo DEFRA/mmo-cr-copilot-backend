@@ -1,7 +1,3 @@
-import {
-  JIRA_ISSUES_COLLECTION,
-  PR_JIRA_LINKS_COLLECTION
-} from '#/services/jira.js'
 import { PAYLOADS_COLLECTION, toPayload } from '#/services/payloads.js'
 import {
   PROJECTS_COLLECTION,
@@ -9,10 +5,40 @@ import {
 } from '#/services/projects.js'
 import { computeFlowMetrics } from '#/services/flow-metrics.js'
 import { computeComplexityScore } from '#/services/complexity.js'
+import { summariseUnmapped } from '#/services/workflow-stages.js'
 import {
-  attachIssueFlow,
-  summariseUnmapped
-} from '#/services/workflow-stages.js'
+  deliveryUnitKey,
+  isBugType,
+  isStoryType,
+  loadScopedIssues,
+  parsePrId,
+  prId
+} from '#/services/jira-scope.js'
+
+const SONAR_PR_SNAPSHOTS_COLLECTION = 'sonar-pr-snapshots'
+const SPRINT_SCOPE_COLLECTION = 'jira-sprint-scope'
+const round1 = (n) => Math.round(n * 10) / 10
+
+function addTo(map, key, value) {
+  if (!map.has(key)) map.set(key, new Set())
+  map.get(key).add(value)
+}
+
+// The newest document per PR, so a PR with payload history reads its latest.
+async function findByPrIds(db, collection, ids) {
+  const found = new Map()
+  if (ids.length === 0) return found
+  const docs = await db
+    .collection(collection)
+    .find({ $or: ids.map(parsePrId) })
+    .sort({ calculatedAt: -1 })
+    .toArray()
+  for (const doc of docs) {
+    const id = prId(doc.repository, doc.prNumber)
+    if (!found.has(id)) found.set(id, doc)
+  }
+  return found
+}
 
 function sumLines(commits, field) {
   return (commits ?? []).reduce(
@@ -60,75 +86,108 @@ function computeSonarMultiplier(sonar, linesAdded, k) {
   )
 }
 
-// Computes QANT, SDU, and delivery DORA metrics for a project in a window.
+/**
+ * QANT, SDU and delivery DORA metrics for a project in a window. The unit is
+ * the Story reached from PR-referenced keys, directly or as a parent (ADR 0012).
+ * `prGates`, when given, captures missing SonarCloud PR gates first.
+ */
 export async function computeDeliveryMetrics(
   db,
   projectSlug,
-  { from, to } = {}
+  { from, to } = {},
+  { prGates } = {}
 ) {
-  const [storedIssues, project, scopes] = await Promise.all([
-    db.collection(JIRA_ISSUES_COLLECTION).find({ projectSlug }).toArray(),
-    db.collection(PROJECTS_COLLECTION).findOne({ slug: projectSlug }),
-    db.collection('jira-sprint-scope').find({ projectSlug }).toArray()
-  ])
-  const { workflow, issues } = attachIssueFlow(storedIssues, project)
+  const project = (await db
+    .collection(PROJECTS_COLLECTION)
+    .findOne({ slug: projectSlug })) ?? { slug: projectSlug }
+  const [{ workflow, issues, prsByKey: referenced }, scopes, payloads] =
+    await Promise.all([
+      loadScopedIssues(db, project),
+      db.collection(SPRINT_SCOPE_COLLECTION).find({ projectSlug }).toArray(),
+      findProjectPayloads(db, projectSlug, { from, to })
+    ])
   const fromDate = from ? new Date(from) : null
   const toDate = to ? new Date(to) : null
-  const doneStories = issues.filter(
-    ({ flow }) =>
-      flow.stageKind === 'done' &&
-      flow.doneAt &&
-      (!fromDate || flow.doneAt >= fromDate) &&
-      (!toDate || flow.doneAt < toDate)
+  const doneInWindow = ({ flow }) =>
+    flow.stageKind === 'done' &&
+    flow.doneAt &&
+    (!fromDate || flow.doneAt >= fromDate) &&
+    (!toDate || flow.doneAt < toDate)
+
+  const byKey = new Map(issues.map((issue) => [issue.key, issue]))
+  const unitPrs = new Map()
+  const prUnits = new Map()
+  const linkedPrIds = new Set()
+  let otherItemsDelivered = 0
+  for (const [key, ids] of referenced) {
+    ids.forEach((id) => linkedPrIds.add(id))
+    const issue = byKey.get(key)
+    if (!issue) continue
+    const unit = deliveryUnitKey(issue, byKey)
+    if (!unit) {
+      if (doneInWindow(issue)) otherItemsDelivered += 1
+      continue
+    }
+    for (const id of ids) {
+      addTo(unitPrs, unit, id)
+      addTo(prUnits, id, unit)
+    }
+  }
+  const units = [...unitPrs.keys()].map((key) => byKey.get(key))
+  const doneStories = units.filter(
+    (unit) => isStoryType(unit.issueType) && doneInWindow(unit)
   )
+  const doneBugs = units.filter(
+    (unit) =>
+      !isStoryType(unit.issueType) &&
+      isBugType(unit.issueType) &&
+      doneInWindow(unit)
+  )
+  const doneUnits = [...doneStories, ...doneBugs]
 
-  const links = await db
-    .collection(PR_JIRA_LINKS_COLLECTION)
-    .find({ projectSlug })
-    .toArray()
-
-  const payloads = await findProjectPayloads(db, projectSlug, { from, to })
-
-  const payloadMap = new Map()
-  for (const p of payloads) {
-    payloadMap.set(`${p.repository}#${p.prNumber}`, p)
-  }
-
-  const jiraKeyToPrs = new Map()
-  const prToJiraKeys = new Map()
-
-  const recordLink = (jiraKey, prId) => {
-    if (!jiraKeyToPrs.has(jiraKey)) jiraKeyToPrs.set(jiraKey, new Set())
-    jiraKeyToPrs.get(jiraKey).add(prId)
-
-    if (!prToJiraKeys.has(prId)) prToJiraKeys.set(prId, new Set())
-    prToJiraKeys.get(prId).add(jiraKey)
-  }
-
-  for (const link of links) {
-    recordLink(link.jiraKey, `${link.repository}#${link.prNumber}`)
-  }
-
-  for (const p of payloads) {
-    const prId = `${p.repository}#${p.prNumber}`
-    if (Array.isArray(p.jiraKeys)) {
-      for (const key of p.jiraKeys) {
-        recordLink(key, prId)
-      }
-    }
-  }
-
-  let unlinkedPrs = 0
-  for (const p of payloads) {
-    const prId = `${p.repository}#${p.prNumber}`
-    const keys = prToJiraKeys.get(prId)
-    if (!keys || keys.size === 0) {
-      unlinkedPrs += 1
-    }
-  }
+  const unlinkedPrs = payloads.filter(
+    (p) => !linkedPrIds.has(prId(p.repository, p.prNumber))
+  ).length
   const totalPrs = payloads.length
   const unlinkedPrRate =
     totalPrs > 0 ? Math.round((unlinkedPrs / totalPrs) * 1000) / 10 : 0
+
+  const payloadMap = new Map(
+    payloads.map((p) => [prId(p.repository, p.prNumber), p])
+  )
+  const unitPrIds = [
+    ...new Set(doneUnits.flatMap((unit) => [...unitPrs.get(unit.key)]))
+  ]
+  const outsideWindow = await findByPrIds(
+    db,
+    PAYLOADS_COLLECTION,
+    unitPrIds.filter((id) => !payloadMap.has(id))
+  )
+  for (const [id, doc] of outsideWindow) payloadMap.set(id, toPayload(doc))
+
+  const storyPrIds = [
+    ...new Set(doneStories.flatMap((story) => [...unitPrs.get(story.key)]))
+  ]
+  const gates = prGates
+    ? await prGates(storyPrIds.map(parsePrId))
+    : { stale: false }
+  const snapshots = await findByPrIds(
+    db,
+    SONAR_PR_SNAPSHOTS_COLLECTION,
+    storyPrIds
+  )
+
+  const prsByKey = new Map()
+  const warnings = []
+  for (const unit of doneUnits) {
+    const prs = [...unitPrs.get(unit.key)]
+      .map((id) => payloadMap.get(id))
+      .filter(Boolean)
+    prsByKey.set(unit.key, prs)
+    if (prs.some((p) => !p.prMergedAt)) {
+      warnings.push({ key: unit.key, type: 'done-with-open-pr' })
+    }
+  }
 
   let totalQualityELoc = 0
   let totalCycleDays = 0
@@ -138,8 +197,6 @@ export async function computeDeliveryMetrics(
   let sduCount = 0
   let firstScanPassedStoriesCount = 0
   let reopenedStories = 0
-  const warnings = []
-  const prsByKey = new Map()
   const leadTimes = []
   const cycleTimes = []
 
@@ -160,44 +217,26 @@ export async function computeDeliveryMetrics(
 
     if (story.flow.reopenCount > 0) reopenedStories += 1
 
-    const linkedPrIds = jiraKeyToPrs.has(story.key)
-      ? [...jiraKeyToPrs.get(story.key)]
-      : []
+    const storyPrIdList = [...unitPrs.get(story.key)]
 
     let storyQualityELoc = 0
     let storyComplexityELoc = 0
     let hasComplexityScore = false
-    let hasOpenPr = false
     let hasSonarSnapshots = false
-    let allSonarPassed = linkedPrIds.length > 0
-    let allFirstScanPassed = linkedPrIds.length > 0
+    let allSonarPassed = storyPrIdList.length > 0
+    let allFirstScanPassed = storyPrIdList.length > 0
 
-    for (const prId of linkedPrIds) {
-      const [repo, prNumStr] = prId.split('#')
-      const prNum = Number(prNumStr)
-      let p = payloadMap.get(prId)
-      if (!p) {
-        const doc = await db
-          .collection(PAYLOADS_COLLECTION)
-          .findOne({ repository: repo, prNumber: prNum })
-        if (doc) p = toPayload(doc)
-      }
-      if (p && !p.prMergedAt) hasOpenPr = true
-      if (p) {
-        if (!prsByKey.has(story.key)) prsByKey.set(story.key, [])
-        prsByKey.get(story.key).push(p)
-      }
+    for (const id of storyPrIdList) {
+      const p = payloadMap.get(id)
 
       const linesAdded =
         p?.summary?.linesAdded ?? sumLines(p?.commitBreakdown, 'linesAdded')
       const linesDeleted =
         p?.summary?.linesDeleted ?? sumLines(p?.commitBreakdown, 'linesDeleted')
-      const k = prToJiraKeys.get(prId)?.size || 1
+      const k = prUnits.get(id)?.size || 1
       const netLines = Math.max(0, linesAdded - linesDeleted) / k
 
-      const sonar = await db
-        .collection('sonar-pr-snapshots')
-        .findOne({ repository: repo, prNumber: prNum })
+      const sonar = snapshots.get(id)
 
       if (sonar) {
         hasSonarSnapshots = true
@@ -235,9 +274,6 @@ export async function computeDeliveryMetrics(
       complexityCycleDays += cycleTime
     }
 
-    if (hasOpenPr) {
-      warnings.push({ key: story.key, type: 'done-with-open-pr' })
-    }
     if (hasSonarSnapshots && allSonarPassed) {
       sduCount += 1
     }
@@ -272,7 +308,7 @@ export async function computeDeliveryMetrics(
       ? Math.round((reopenedStories / storiesDelivered) * 1000) / 10
       : 0
   const flow = computeFlowMetrics({
-    done: doneStories,
+    done: doneUnits,
     issues,
     prsByKey,
     payloads,
@@ -291,6 +327,8 @@ export async function computeDeliveryMetrics(
     leadTimeToDoneDays,
     cycleTimeDays,
     storiesDelivered,
+    storyPointsDelivered: round1(totalStoryPoints),
+    otherItemsDelivered,
     unlinkedPrRate,
     firstScanPassRate,
     reopenRate,
@@ -300,6 +338,7 @@ export async function computeDeliveryMetrics(
       version: workflow.version,
       unmappedStatuses: summariseUnmapped(issues)
     },
+    sonar: { stale: gates.stale },
     warnings
   }
 }

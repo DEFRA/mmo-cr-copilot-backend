@@ -1,6 +1,6 @@
 # 0011. Jira workflow status mapping
 
-- **Status:** Accepted
+- **Status:** Accepted; detection timing and category fallback under a saved mapping superseded by [0012](0012-lazy-pr-scoped-jira-fetch.md)
 - **Date:** 2026-11-05
 
 ## Context

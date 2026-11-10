@@ -1,0 +1,31 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/services/jira-workflow.test.js",
+  "added": 12,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 12,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "36,182-190,193,290"
+  },
+  "ai": [
+    [36, "a", "f6d0fe42", 0],
+    [182, "a", "4f37494a", 0],
+    [183, "a", "72af9b3b", 0],
+    [184, "a", "300064e8", 0],
+    [185, "a", "21e91c6c", 0],
+    [186, "a", "77b53f14", 0],
+    [187, "a", "36ae1592", 0],
+    [188, "a", "fb9d95b5", 0],
+    [189, "a", "b5ae43c8", 0],
+    [190, "a", "a31996cd", 0],
+    [193, "a", "29dd938f", 0],
+    [290, "a", "25ae26f4", 0]
+  ]
+}

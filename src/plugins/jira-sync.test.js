@@ -54,6 +54,9 @@ describe('#jira-sync', () => {
           jira: { projectKeys: ['OLD'] }
         }
       ])
+      await db
+        .collection(JIRA_ISSUES_COLLECTION)
+        .insertOne({ key: 'MMO-1', projectSlug: 'live' })
       const client = fakeClient()
 
       const result = await runJiraSync({
@@ -86,6 +89,25 @@ describe('#jira-sync', () => {
         archivedAt: null,
         jira: { projectKeys: ['N'] }
       })
+      const client = fakeClient()
+
+      await runJiraSync({ db, locker: server.locker, client, logger })
+
+      expect(client.syncProjectIssues.mock.calls[0][4]).toEqual({})
+    })
+
+    test('Should do a full sync when a synced project has no issues stored', async () => {
+      await db.collection(PROJECTS_COLLECTION).insertOne({
+        slug: 'empty',
+        archivedAt: null,
+        jira: {
+          projectKeys: ['E'],
+          lastSyncedAt: new Date('2026-03-01T10:00:00Z')
+        }
+      })
+      await db
+        .collection(JIRA_ISSUES_COLLECTION)
+        .insertOne({ key: 'X-1', projectSlug: 'other' })
       const client = fakeClient()
 
       await runJiraSync({ db, locker: server.locker, client, logger })

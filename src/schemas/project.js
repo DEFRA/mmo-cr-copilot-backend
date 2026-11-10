@@ -6,6 +6,7 @@ export const PROJECT_SLUG_PATTERN = /^[A-Z][A-Z0-9]{2,3}$/
 export const PROJECT_SLUG_CREATE_PATTERN = /^[A-Z]{3,4}$/
 
 export const JIRA_PROJECT_KEY_PATTERN = /^[A-Z][A-Z0-9_]+$/
+export const STORY_POINTS_FIELD_PATTERN = /^customfield_\d+$/
 export const SONAR_PROJECT_KEY_PATTERN = /^[\w.:-]+$/
 
 export const AI_NATIVE_JIRA_KEY_MESSAGE =
@@ -57,7 +58,9 @@ export const projectCreateSchema = Joi.object({
   }).default(),
   jira: Joi.object({
     projectKeys: jiraProjectKeys.default([]),
-    storyPointsField: Joi.string().default('customfield_10016'),
+    storyPointsField: Joi.string()
+      .pattern(STORY_POINTS_FIELD_PATTERN)
+      .optional(),
     boardId: Joi.number().integer().positive().optional()
   }).default()
 }).options({ stripUnknown: true })
@@ -74,7 +77,10 @@ export const projectUpdateSchema = Joi.object({
   // No defaults: an omitted field must leave the stored value alone.
   jira: Joi.object({
     projectKeys: jiraProjectKeys.optional(),
-    storyPointsField: Joi.string().optional(),
+    storyPointsField: Joi.string()
+      .pattern(STORY_POINTS_FIELD_PATTERN)
+      .allow(null)
+      .optional(),
     boardId: Joi.number().integer().positive().optional()
   }).optional()
 }).options({ stripUnknown: true })

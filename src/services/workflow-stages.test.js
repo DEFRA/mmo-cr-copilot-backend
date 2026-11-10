@@ -620,5 +620,64 @@ describe('#workflow-stages', () => {
       ])
       expect(summariseUnmapped(withFlow, 1)).toHaveLength(1)
     })
+
+    test('Should not count a done-category status outside a saved Done stage as Done', () => {
+      const project = savedProject({
+        todo: ['To Do'],
+        'in-progress': ['In Progress'],
+        done: ['Done'],
+        cancelled: ['Closed - NLR']
+      })
+      const { issues } = attachIssueFlow(
+        [
+          issue({
+            key: 'A-1',
+            status: { name: 'Closed - NLR', categoryKey: 'done' },
+            statusHistory: path(
+              [1, 'To Do'],
+              [2, 'In Progress'],
+              [4, 'Closed - NLR']
+            )
+          }),
+          issue({
+            key: 'A-2',
+            status: { name: "Won't Fix", categoryKey: 'done' },
+            statusHistory: path(
+              [1, 'To Do'],
+              [2, 'In Progress'],
+              [4, "Won't Fix"]
+            )
+          })
+        ],
+        project,
+        NOW
+      )
+
+      expect(issues[0].flow.stageKind).toBe('excluded')
+      expect(issues[0].flow.doneAt).toBeNull()
+      expect(issues[1].flow.stageKind).toBe('unmapped')
+      expect(issues[1].flow.unmappedStatuses).toEqual(["Won't Fix"])
+    })
+
+    test('Should keep the category fallback without a saved mapping', () => {
+      const { issues } = attachIssueFlow(
+        [
+          {
+            key: 'A-1',
+            status: { name: 'Shipped To Users', categoryKey: 'done' },
+            created: at(1),
+            statusHistory: path(
+              [1, 'To Do'],
+              [2, 'In Progress'],
+              [4, 'Shipped To Users']
+            )
+          }
+        ],
+        null,
+        NOW
+      )
+
+      expect(issues[0].flow.stageKind).toBe('done')
+    })
   })
 })

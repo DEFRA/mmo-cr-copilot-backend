@@ -338,10 +338,10 @@ export function classifyStatus(name, index, catalogue = new Map()) {
   return { stageId: null, kind: 'unmapped', inferred: false }
 }
 
-function currentStatus(issue, index, catalogue) {
+function currentStatus(issue, index, catalogue, categoryFallback = true) {
   const current = classifyStatus(issue.status?.name, index, catalogue)
   const ownKind = CATEGORY_KIND[issue.status?.categoryKey]
-  return current.kind === 'unmapped' && ownKind
+  return categoryFallback && current.kind === 'unmapped' && ownKind
     ? { stageId: null, kind: ownKind, inferred: true }
     : current
 }
@@ -445,8 +445,14 @@ function timeInFlow(segments, started, end) {
 }
 
 /** Start, end and time in flow of one issue under a workflow index. Never mutates `issue`. */
-export function deriveIssueFlow(issue, index, catalogue, now = new Date()) {
-  const current = currentStatus(issue, index, catalogue)
+export function deriveIssueFlow(
+  issue,
+  index,
+  catalogue,
+  now = new Date(),
+  { categoryFallback = true } = {}
+) {
+  const current = currentStatus(issue, index, catalogue, categoryFallback)
   const history = (issue.statusHistory ?? [])
     .map((change) => ({ ...change, at: toTime(change.at) }))
     .filter((change) => Number.isFinite(change.at))
@@ -508,16 +514,17 @@ export function deriveIssueFlow(issue, index, catalogue, now = new Date()) {
   }
 }
 
-/** Issues with a `flow` block under the project's effective workflow. */
+/** Issues with a `flow` block under the project's effective workflow. A saved mapping is authoritative: no category fallback. */
 export function attachIssueFlow(issues, project, now = new Date()) {
   const workflow = resolveWorkflow(project)
   const index = buildWorkflowIndex(workflow)
-  const catalogue = buildStatusCatalogue(issues)
+  const categoryFallback = workflow.source !== 'project'
+  const catalogue = categoryFallback ? buildStatusCatalogue(issues) : new Map()
   return {
     workflow,
     issues: issues.map((issue) => ({
       ...issue,
-      flow: deriveIssueFlow(issue, index, catalogue, now)
+      flow: deriveIssueFlow(issue, index, catalogue, now, { categoryFallback })
     }))
   }
 }

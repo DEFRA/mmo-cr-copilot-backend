@@ -168,6 +168,59 @@ describe('#projects service', () => {
       })
     })
 
+    test('Should mark an admin-set story points field', async () => {
+      await service.createProject(db, {
+        slug: 'SPAD',
+        name: 'Admin Field',
+        jira: { projectKeys: [], storyPointsField: 'customfield_5' }
+      })
+      await service.createProject(db, {
+        slug: 'SPDT',
+        name: 'Detected Field',
+        jira: { projectKeys: [] }
+      })
+
+      const created = await db
+        .collection(service.PROJECTS_COLLECTION)
+        .findOne({ slug: 'SPAD' })
+      const untouched = await db
+        .collection(service.PROJECTS_COLLECTION)
+        .findOne({ slug: 'SPDT' })
+      const updated = await service.updateProject(db, 'SPDT', {
+        jira: { storyPointsField: 'customfield_7' }
+      })
+
+      expect(created.jira.storyPointsFieldSource).toBe('admin')
+      expect(untouched.jira.storyPointsFieldSource).toBeUndefined()
+      expect(updated.jira).toMatchObject({
+        storyPointsField: 'customfield_7',
+        storyPointsFieldSource: 'admin'
+      })
+    })
+
+    test('Should clear the source and detection time when the field is null', async () => {
+      await db.collection(service.PROJECTS_COLLECTION).insertOne({
+        slug: 'SPNL',
+        jira: {
+          projectKeys: [],
+          storyPointsField: 'customfield_7',
+          storyPointsFieldSource: 'admin',
+          storyPointsFieldDetectedAt: new Date('2026-10-01T09:00:00.000Z')
+        }
+      })
+
+      await service.updateProject(db, 'SPNL', {
+        jira: { storyPointsField: null }
+      })
+
+      const stored = await db
+        .collection(service.PROJECTS_COLLECTION)
+        .findOne({ slug: 'SPNL' })
+      expect(stored.jira.storyPointsField).toBeNull()
+      expect(stored.jira.storyPointsFieldSource).toBeNull()
+      expect(stored.jira.storyPointsFieldDetectedAt).toBeNull()
+    })
+
     test('Should refuse a first Jira key once another write has set one', async () => {
       await db.collection(service.PROJECTS_COLLECTION).insertOne({
         slug: 'RACE',
