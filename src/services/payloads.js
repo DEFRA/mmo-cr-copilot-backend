@@ -57,16 +57,20 @@ function toDocument(payload) {
   }
 }
 
+// Storage-only fields never returned to callers.
+const STORAGE_FIELDS = new Set([
+  '_id',
+  'receivedAt',
+  'classificationOverrides',
+  'projectSlug'
+])
+
 // v1 documents are never given v2 defaults: a missing `jiraKeys` means "not
 // collected", which an invented `[]` ("none found") would misreport.
 export function toPayload(doc) {
-  const {
-    _id: _ignoredId,
-    receivedAt: _ignoredReceivedAt,
-    classificationOverrides: _ignoredOverrides,
-    projectSlug: _ignoredProjectSlug,
-    ...rest
-  } = doc
+  const rest = Object.fromEntries(
+    Object.entries(doc).filter(([key]) => !STORAGE_FIELDS.has(key))
+  )
 
   const payload = {
     ...rest,
@@ -211,6 +215,82 @@ function applyClassificationOverrides(payload, overrides, logger) {
   }
 }
 
+const prLabel = (payload) => `${payload.repository}#${payload.prNumber}`
+
+// A live merged record is authoritative; backfill only fills gaps (E6-S4).
+const isShadowedBackfill = (payload, previous) =>
+  payload.source === 'backfill' &&
+  Boolean(previous?.prMergedAt) &&
+  (previous.source ?? 'live') === 'live'
+
+function withSourceBranch(payload, previous, logger) {
+  if (payload.sourceBranch) {
+    return payload
+  }
+  if (!previous?.sourceBranch) {
+    logger?.warn(
+      `sourceBranch omitted for ${prLabel(payload)} and no previous message was found`
+    )
+    return payload
+  }
+  logger?.info(
+    `sourceBranch omitted for ${prLabel(payload)}; backfilled '${previous.sourceBranch}' from the previous message`
+  )
+  return { ...payload, sourceBranch: previous.sourceBranch }
+}
+
+// The repository's project and the PR's complexity under that project's model.
+async function projectAndComplexity(db, record) {
+  const repo = await db
+    .collection('repositories')
+    .findOne({ fullName: record.repository })
+  const projectSlug = repo?.projectSlug || null
+  const project = projectSlug
+    ? await db
+        .collection('projects')
+        .findOne({ slug: projectSlug }, { projection: { complexity: 1 } })
+    : null
+  const complexity = record.files
+    ? computeComplexityScore(record.files, project?.complexity)
+    : undefined
+  return { projectSlug, complexity }
+}
+
+async function linkJiraKeys(db, record, projectSlug) {
+  if (!projectSlug || !record.jiraKeys?.length) {
+    return
+  }
+  await linkPrsToJiraIssues(db, {
+    projectSlug,
+    repository: record.repository,
+    prNumber: record.prNumber,
+    jiraKeys: record.jiraKeys
+  })
+}
+
+/**
+ * Replaces an older stored record or inserts the first one. If the insert
+ * loses a race to a concurrent writer, one retry takes the update path.
+ */
+async function writeIfNewer(collection, filter, document, retries = 1) {
+  const { matchedCount } = await collection.updateOne(
+    { ...filter, calculatedAt: { $lt: document.calculatedAt } },
+    { $set: document, $inc: { updateCount: 1 } }
+  )
+  if (matchedCount > 0) {
+    return true
+  }
+  try {
+    await collection.insertOne({ ...document, updateCount: 1 })
+    return true
+  } catch (error) {
+    if (error?.code !== DUPLICATE_KEY_ERROR) {
+      throw error
+    }
+  }
+  return retries > 0 && writeIfNewer(collection, filter, document, retries - 1)
+}
+
 /**
  * Persists a validated payload as the single record for its pull request.
  *
@@ -232,51 +312,20 @@ export async function savePayload(db, payload, logger) {
     { sort: { calculatedAt: -1 } }
   )
 
-  let record = payload
-
-  // A live merged record is authoritative; backfill only fills gaps (E6-S4).
-  if (
-    payload.source === 'backfill' &&
-    previous?.prMergedAt &&
-    (previous.source ?? 'live') === 'live'
-  ) {
+  if (isShadowedBackfill(payload, previous)) {
     logger?.info(
-      `Skipped backfill for ${payload.repository}#${payload.prNumber}; a live merged payload exists`
+      `Skipped backfill for ${prLabel(payload)}; a live merged payload exists`
     )
     return { record: payload, stored: false }
   }
 
-  if (!payload.sourceBranch) {
-    if (previous?.sourceBranch) {
-      record = { ...payload, sourceBranch: previous.sourceBranch }
-      logger?.info(
-        `sourceBranch omitted for ${payload.repository}#${payload.prNumber}; backfilled '${previous.sourceBranch}' from the previous message`
-      )
-    } else {
-      logger?.warn(
-        `sourceBranch omitted for ${payload.repository}#${payload.prNumber} and no previous message was found`
-      )
-    }
-  }
-
   const classificationOverrides = previous?.classificationOverrides ?? []
-  record = applyClassificationOverrides(record, classificationOverrides, logger)
-
-  const repo = await db
-    .collection('repositories')
-    .findOne({ fullName: record.repository })
-  const projectSlug = repo?.projectSlug || null
-  const model = projectSlug
-    ? (
-        await db
-          .collection('projects')
-          .findOne({ slug: projectSlug }, { projection: { complexity: 1 } })
-      )?.complexity
-    : undefined
-
-  const complexity = record.files
-    ? computeComplexityScore(record.files, model)
-    : undefined
+  const record = applyClassificationOverrides(
+    withSourceBranch(payload, previous, logger),
+    classificationOverrides,
+    logger
+  )
+  const { projectSlug, complexity } = await projectAndComplexity(db, record)
 
   const filter = { repository: record.repository, prNumber: record.prNumber }
   const document = {
@@ -287,54 +336,13 @@ export async function savePayload(db, payload, logger) {
     ...(complexity ? { complexity } : {})
   }
 
-  // At most two passes: if the insert loses a race to a concurrent writer,
-  // the second pass takes the conditional-update path against the winner.
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const { matchedCount } = await collection.updateOne(
-      { ...filter, calculatedAt: { $lt: document.calculatedAt } },
-      { $set: document, $inc: { updateCount: 1 } }
-    )
-
-    if (matchedCount > 0) {
-      if (
-        projectSlug &&
-        Array.isArray(record.jiraKeys) &&
-        record.jiraKeys.length > 0
-      ) {
-        await linkPrsToJiraIssues(db, {
-          projectSlug,
-          repository: record.repository,
-          prNumber: record.prNumber,
-          jiraKeys: record.jiraKeys
-        })
-      }
-      return { record, stored: true, projectSlug }
-    }
-
-    try {
-      await collection.insertOne({ ...document, updateCount: 1 })
-      if (
-        projectSlug &&
-        Array.isArray(record.jiraKeys) &&
-        record.jiraKeys.length > 0
-      ) {
-        await linkPrsToJiraIssues(db, {
-          projectSlug,
-          repository: record.repository,
-          prNumber: record.prNumber,
-          jiraKeys: record.jiraKeys
-        })
-      }
-      return { record, stored: true, projectSlug }
-    } catch (error) {
-      if (error?.code !== DUPLICATE_KEY_ERROR) {
-        throw error
-      }
-    }
+  if (await writeIfNewer(collection, filter, document)) {
+    await linkJiraKeys(db, record, projectSlug)
+    return { record, stored: true, projectSlug }
   }
 
   logger?.info(
-    `Ignored a stale analytics payload for ${record.repository}#${record.prNumber}; the stored record is already at or ahead of ${record.calculatedAt}`
+    `Ignored a stale analytics payload for ${prLabel(record)}; the stored record is already at or ahead of ${record.calculatedAt}`
   )
 
   return { record, stored: false }

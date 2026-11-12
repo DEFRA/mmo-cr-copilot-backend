@@ -16,13 +16,19 @@ const window = (from, to) => ({
 describe('#mock data fixtures', () => {
   test('Should only reference seeded Jira issues', () => {
     for (const s of JIRA_SPRINT_SCOPES) {
-      for (const key of s.issueKeys) expect(keys).toContain(key)
+      for (const key of s.issueKeys) {
+        expect(keys).toContain(key)
+      }
     }
     for (const spec of JIRA_SCENARIO_PAYLOAD_SPECS) {
-      for (const key of spec.jiraKeys) expect(keys).toContain(key)
+      for (const key of spec.jiraKeys) {
+        expect(keys).toContain(key)
+      }
     }
     for (const issue of JIRA_ISSUES) {
-      for (const link of issue.issueLinks) expect(keys).toContain(link.key)
+      for (const link of issue.issueLinks) {
+        expect(keys).toContain(link.key)
+      }
     }
   })
 

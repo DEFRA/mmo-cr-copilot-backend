@@ -1,13 +1,16 @@
 /** Runs `fn` over `items` with at most `limit` in flight; results keep input order. */
 export async function mapWithConcurrency(items, limit, fn) {
-  const results = new Array(items.length)
+  const results = Array.from({ length: items.length })
   let next = 0
+  // Each worker takes the next unclaimed item until none are left.
   const worker = async () => {
-    while (next < items.length) {
-      const index = next
-      next += 1
-      results[index] = await fn(items[index], index)
+    if (next >= items.length) {
+      return
     }
+    const index = next
+    next += 1
+    results[index] = await fn(items[index], index)
+    await worker()
   }
   const workers = Math.max(0, Math.min(limit, items.length))
   await Promise.all(Array.from({ length: workers }, worker))

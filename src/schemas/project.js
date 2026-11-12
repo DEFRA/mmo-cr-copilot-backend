@@ -14,10 +14,21 @@ export const AI_NATIVE_JIRA_KEY_MESSAGE =
 export const JIRA_KEY_REQUIRED_MESSAGE =
   'The Jira project key cannot be removed'
 
+const MAX_SONAR_KEY_LENGTH = 255
+const MAX_PROJECT_NAME_LENGTH = 200
+const MAX_SPRINT_LENGTH_DAYS = 30
+export const DEFAULT_SPRINT_LENGTH_DAYS = 14
+export const DEFAULT_SPRINT_ANCHOR = '2026-07-08T00:00:00.000Z'
+const MAX_SPRINT_COUNT = 50
+const DEFAULT_SPRINT_COUNT = 5
+const MAX_PR_JIRA_KEYS = 20
+const MAX_CHURN_WINDOW_DAYS = 90
+const DEFAULT_CHURN_WINDOW_DAYS = 21
+
 // Trimmed; '' and null both mean "no key" and are stored as null.
 const sonarProjectKey = Joi.string()
   .trim()
-  .max(255)
+  .max(MAX_SONAR_KEY_LENGTH)
   .pattern(SONAR_PROJECT_KEY_PATTERN)
   .allow('', null)
 
@@ -31,6 +42,14 @@ export function hasRequiredJiraKey({ type, jira } = {}) {
 }
 
 const weight = Joi.number().min(0).max(1).required()
+const WEIGHT_SUM_TOLERANCE = 1e-6
+const projectName = Joi.string().min(1).max(MAX_PROJECT_NAME_LENGTH)
+const projectType = Joi.string().valid('ai-adopted', 'ai-native')
+const sprintLength = Joi.number().integer().min(1).max(MAX_SPRINT_LENGTH_DAYS)
+const sprintCalendarWithDefaults = Joi.object({
+  cadenceDays: sprintLength.default(DEFAULT_SPRINT_LENGTH_DAYS),
+  anchorDate: Joi.date().iso().default(DEFAULT_SPRINT_ANCHOR)
+})
 
 // The version is server-owned: each admin change increments it.
 export const complexityModelSchema = Joi.object({
@@ -40,7 +59,7 @@ export const complexityModelSchema = Joi.object({
   weights: Joi.object({ lines: weight, files: weight, modules: weight })
     .required()
     .custom((w, helpers) =>
-      Math.abs(w.lines + w.files + w.modules - 1) < 1e-6
+      Math.abs(w.lines + w.files + w.modules - 1) < WEIGHT_SUM_TOLERANCE
         ? w
         : helpers.message('weights must sum to 1')
     ),
@@ -50,13 +69,10 @@ export const complexityModelSchema = Joi.object({
 
 export const projectCreateSchema = Joi.object({
   slug: Joi.string().pattern(PROJECT_SLUG_CREATE_PATTERN).required(),
-  name: Joi.string().min(1).max(200).required(),
-  type: Joi.string().valid('ai-adopted', 'ai-native').required(),
+  name: projectName.required(),
+  type: projectType.required(),
   adoptionStartDate: Joi.date().iso().optional(),
-  sprintCalendar: Joi.object({
-    cadenceDays: Joi.number().integer().min(1).max(30).default(14),
-    anchorDate: Joi.date().iso().default('2026-07-08T00:00:00.000Z')
-  }).default(),
+  sprintCalendar: sprintCalendarWithDefaults.default(),
   jira: Joi.object({
     projectKeys: jiraProjectKeys.default([]),
     storyPointsField: Joi.string()
@@ -68,13 +84,10 @@ export const projectCreateSchema = Joi.object({
 
 export const projectUpdateSchema = Joi.object({
   slug: Joi.forbidden(),
-  name: Joi.string().min(1).max(200).optional(),
-  type: Joi.string().valid('ai-adopted', 'ai-native').optional(),
+  name: projectName.optional(),
+  type: projectType.optional(),
   adoptionStartDate: Joi.date().iso().allow(null).optional(),
-  sprintCalendar: Joi.object({
-    cadenceDays: Joi.number().integer().min(1).max(30).default(14),
-    anchorDate: Joi.date().iso().default('2026-07-08T00:00:00.000Z')
-  }).optional(),
+  sprintCalendar: sprintCalendarWithDefaults.optional(),
   // No defaults: an omitted field must leave the stored value alone.
   jira: Joi.object({
     projectKeys: jiraProjectKeys.optional(),
@@ -114,13 +127,28 @@ export const leverageQuerySchema = Joi.object({
   repository: Joi.string().min(1).max(512).optional()
 }).options({ stripUnknown: true })
 
+export const churnQuerySchema = Joi.object({
+  windowDays: Joi.number()
+    .integer()
+    .min(1)
+    .max(MAX_CHURN_WINDOW_DAYS)
+    .default(DEFAULT_CHURN_WINDOW_DAYS),
+  from: Joi.date().iso().optional(),
+  to: Joi.date().iso().optional()
+}).unknown()
+
 export const projectSprintsQuerySchema = Joi.object({
-  count: Joi.number().integer().min(1).max(50).default(5).optional()
+  count: Joi.number()
+    .integer()
+    .min(1)
+    .max(MAX_SPRINT_COUNT)
+    .default(DEFAULT_SPRINT_COUNT)
+    .optional()
 }).options({ stripUnknown: true })
 
 // Set by a project admin from Settings → JIRA; both fields are required.
 export const sprintCalendarSchema = Joi.object({
-  cadenceDays: Joi.number().integer().min(1).max(30).required(),
+  cadenceDays: sprintLength.required(),
   anchorDate: Joi.date().iso().required()
 }).options({ stripUnknown: true })
 
@@ -135,7 +163,7 @@ export const prLinkParamSchema = Joi.object({
 export const prLinkPayloadSchema = Joi.object({
   jiraKeys: Joi.array()
     .items(Joi.string().pattern(JIRA_ISSUE_KEY_PATTERN))
-    .max(20)
+    .max(MAX_PR_JIRA_KEYS)
     .unique()
     .required()
 }).options({ stripUnknown: true })

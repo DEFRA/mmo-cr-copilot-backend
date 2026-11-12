@@ -21,7 +21,7 @@ export const sonar = {
       } else {
         server.events.on('start', () => {
           // Diagnostic only — a bad token never blocks startup.
-          live.validateToken()
+          void live.validateToken()
         })
       }
     }

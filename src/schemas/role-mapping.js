@@ -20,8 +20,11 @@ const groupName = Joi.string()
   .pattern(/^[^\u0000-\u001f\u007f]+$/)
   .message('{{#label}} must not contain control characters')
 
+const MAX_DESCRIPTION_LENGTH = 500
+const OBJECT_ID_LENGTH = 24
+
 const projectSlug = Joi.string().pattern(PROJECT_SLUG_PATTERN)
-const description = Joi.string().allow('').max(500)
+const description = Joi.string().allow('').max(MAX_DESCRIPTION_LENGTH)
 
 export const roleMappingCreateSchema = Joi.object({
   groupName: groupName.required(),
@@ -46,7 +49,7 @@ export const roleMappingUpdateSchema = Joi.object({
   .options({ stripUnknown: true })
 
 export const roleMappingIdParamSchema = Joi.object({
-  id: Joi.string().hex().length(24).required()
+  id: Joi.string().hex().length(OBJECT_ID_LENGTH).required()
 })
 
 export const roleMappingListQuerySchema = Joi.object({

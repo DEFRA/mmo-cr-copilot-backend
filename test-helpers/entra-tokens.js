@@ -66,10 +66,18 @@ export async function signAccessToken(keys, overrides = {}, options = {}) {
     .setIssuedAt(now)
     .setNotBefore(now)
     .setExpirationTime(now + 3600)
-  if (options.issuer !== undefined) jwt.setIssuer(options.issuer)
-  if (options.audience !== undefined) jwt.setAudience(options.audience)
-  if (options.notBefore !== undefined) jwt.setNotBefore(options.notBefore)
-  if (options.expiresAt !== undefined) jwt.setExpirationTime(options.expiresAt)
+  if (options.issuer !== undefined) {
+    jwt.setIssuer(options.issuer)
+  }
+  if (options.audience !== undefined) {
+    jwt.setAudience(options.audience)
+  }
+  if (options.notBefore !== undefined) {
+    jwt.setNotBefore(options.notBefore)
+  }
+  if (options.expiresAt !== undefined) {
+    jwt.setExpirationTime(options.expiresAt)
+  }
   return jwt.sign(options.key ?? keys.privateKey)
 }
 

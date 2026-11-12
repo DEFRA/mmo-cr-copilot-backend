@@ -14,7 +14,9 @@ const DATE_FIELDS = ['mergedAt', 'measuredAt', 'calculatedAt']
 
 function toDocument(record, projectSlug) {
   const document = { ...record, projectSlug, receivedAt: new Date() }
-  for (const field of DATE_FIELDS) document[field] = new Date(record[field])
+  for (const field of DATE_FIELDS) {
+    document[field] = new Date(record[field])
+  }
   return document
 }
 
@@ -38,26 +40,35 @@ export async function saveSurvival(db, record) {
     windowDays: record.windowDays
   }
 
-  // At most two passes: an insert that loses a race falls through to the
-  // conditional update against the winner.
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const { matchedCount } = await collection.updateOne(
-      { ...filter, measuredAt: { $lt: document.measuredAt } },
-      { $set: document }
-    )
-    if (matchedCount > 0) {
-      return { status: SURVIVAL_STATUS.updated, projectSlug }
-    }
+  return writeIfNewer(collection, filter, document, projectSlug)
+}
 
-    try {
-      await collection.insertOne(document)
-      return { status: SURVIVAL_STATUS.created, projectSlug }
-    } catch (error) {
-      if (error?.code !== DUPLICATE_KEY_ERROR) throw error
+// An insert that loses a race gets one retry, which takes the conditional update.
+async function writeIfNewer(
+  collection,
+  filter,
+  document,
+  projectSlug,
+  retries = 1
+) {
+  const { matchedCount } = await collection.updateOne(
+    { ...filter, measuredAt: { $lt: document.measuredAt } },
+    { $set: document }
+  )
+  if (matchedCount > 0) {
+    return { status: SURVIVAL_STATUS.updated, projectSlug }
+  }
+  try {
+    await collection.insertOne(document)
+    return { status: SURVIVAL_STATUS.created, projectSlug }
+  } catch (error) {
+    if (error?.code !== DUPLICATE_KEY_ERROR) {
+      throw error
     }
   }
-
-  return { status: SURVIVAL_STATUS.stale, projectSlug }
+  return retries > 0
+    ? writeIfNewer(collection, filter, document, projectSlug, retries - 1)
+    : { status: SURVIVAL_STATUS.stale, projectSlug }
 }
 
 /**

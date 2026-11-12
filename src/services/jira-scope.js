@@ -77,7 +77,9 @@ export async function referencedKeys(db, project, { from, to } = {}) {
   }
   const byKey = new Map()
   const add = (key, id) => {
-    if (!byKey.has(key)) byKey.set(key, new Set())
+    if (!byKey.has(key)) {
+      byKey.set(key, new Set())
+    }
     byKey.get(key).add(id)
   }
   for (const row of payloadRows) {

@@ -23,10 +23,12 @@ async function clearData() {
       'audit-logs'
     ]
 
-    for (const name of collections) {
-      const res = await db.collection(name).deleteMany({})
-      console.log(`Cleared ${res.deletedCount} document(s) from '${name}'.`)
-    }
+    await Promise.all(
+      collections.map(async (name) => {
+        const res = await db.collection(name).deleteMany({})
+        console.log(`Cleared ${res.deletedCount} document(s) from '${name}'.`)
+      })
+    )
 
     console.log('Database reset to clean state.')
   } catch (error) {
@@ -37,4 +39,4 @@ async function clearData() {
   }
 }
 
-clearData()
+await clearData()

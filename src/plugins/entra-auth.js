@@ -29,7 +29,9 @@ function unauthorized(error) {
 
 function forbidden(message, header) {
   const err = Boom.forbidden(message)
-  if (header) err.output.headers['WWW-Authenticate'] = header
+  if (header) {
+    err.output.headers['WWW-Authenticate'] = header
+  }
   return err
 }
 
@@ -51,7 +53,9 @@ function logFailure(request, code, oid) {
 function toBoom(request, error) {
   const code = error instanceof TokenError ? error.code : 'unexpected'
   logFailure(request, code)
-  if (code === TOKEN_ERRORS.overage) return forbidden('Group overage')
+  if (code === TOKEN_ERRORS.overage) {
+    return forbidden('Group overage')
+  }
   if (code === TOKEN_ERRORS.scope) {
     return forbidden(
       'Insufficient scope',
@@ -67,9 +71,13 @@ function createScheme(options) {
   return () => ({
     authenticate: async (request, h) => {
       const header = request.headers.authorization
-      if (!header) throw unauthorized()
+      if (!header) {
+        throw unauthorized()
+      }
       const match = BEARER.exec(header)
-      if (!match) throw unauthorized('invalid_request')
+      if (!match) {
+        throw unauthorized('invalid_request')
+      }
 
       let claims
       try {
@@ -100,7 +108,9 @@ export const entraAuth = {
       // Warm the signing keys without delaying or failing start-up.
       const warm = async () => {
         const settings = readAuthSettings()
-        if (options.jwks || settings.devBypass || !settings.tenantId) return
+        if (options.jwks || settings.devBypass || !settings.tenantId) {
+          return
+        }
         try {
           const jwks = createJwksResolver({
             tenantId: settings.tenantId,
@@ -130,7 +140,7 @@ export const entraAuth = {
         }
       }
       server.ext('onPostStart', () => {
-        warm()
+        void warm()
       })
     }
   }

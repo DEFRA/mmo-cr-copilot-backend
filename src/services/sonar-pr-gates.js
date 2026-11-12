@@ -19,7 +19,9 @@ export async function ensurePrQualityGates({
   budgetMs = config.get('sonar.lazyGateBudgetMs'),
   maxPrs = config.get('sonar.lazyGateMaxPrs')
 }) {
-  if (!sonar || prs.length === 0) return { stale: false }
+  if (!sonar || prs.length === 0) {
+    return { stale: false }
+  }
   const unique = [...new Map(prs.map((pr) => [idOf(pr), pr])).values()]
   const [stored, linked] = await Promise.all([
     db

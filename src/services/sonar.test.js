@@ -41,7 +41,9 @@ function createMockDb(repositories = REPOSITORIES) {
             return (
               docs.find((d) =>
                 Object.entries(query).every(([k, v]) => {
-                  if (v instanceof Date) return d[k]?.getTime() === v.getTime()
+                  if (v instanceof Date) {
+                    return d[k]?.getTime() === v.getTime()
+                  }
                   return d[k] === v
                 })
               ) ?? null
@@ -51,7 +53,9 @@ function createMockDb(repositories = REPOSITORIES) {
             const doc = update.$set ?? update
             const existingIdx = docs.findIndex((d) =>
               Object.entries(filter).every(([k, v]) => {
-                if (v instanceof Date) return d[k]?.getTime() === v.getTime()
+                if (v instanceof Date) {
+                  return d[k]?.getTime() === v.getTime()
+                }
                 return d[k] === v
               })
             )

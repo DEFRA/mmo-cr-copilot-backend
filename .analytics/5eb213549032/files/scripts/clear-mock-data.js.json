@@ -1,0 +1,26 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "scripts/clear-mock-data.js",
+  "added": 7,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 7,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "26-31,42"
+  },
+  "ai": [
+    [26, "a", "dc9c707f", 0],
+    [27, "a", "5479bd41", 0],
+    [28, "a", "f51df591", 0],
+    [29, "a", "10bbbfd2", 0],
+    [30, "a", "ee44a98c", 0],
+    [31, "a", "a31996cd", 0],
+    [42, "a", "8c86dad4", 0]
+  ]
+}

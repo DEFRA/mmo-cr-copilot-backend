@@ -9,7 +9,19 @@ import Joi from 'joi'
 const ISO_DATE_TIME =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/
 
-export const SURVIVAL_WINDOWS = [7, 14, 21, 30]
+const ONE_WEEK_DAYS = 7
+const TWO_WEEKS_DAYS = 14
+const THREE_WEEKS_DAYS = 21
+const THIRTY_DAYS = 30
+const MAX_REPOSITORY_LENGTH = 200
+const MAX_PATH_LENGTH = 500
+
+export const SURVIVAL_WINDOWS = [
+  ONE_WEEK_DAYS,
+  TWO_WEEKS_DAYS,
+  THREE_WEEKS_DAYS,
+  THIRTY_DAYS
+]
 export const MAX_SURVIVAL_FILES = 200
 export const SURVIVAL_METADATA_SCHEMAS = [
   'ai-attribution/2',
@@ -38,7 +50,7 @@ export const survivalSchema = Joi.object({
   schemaVersion: Joi.number().valid(1).required(),
   repository: Joi.string()
     .pattern(/^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/)
-    .max(200)
+    .max(MAX_REPOSITORY_LENGTH)
     .required(),
   prNumber: Joi.number().integer().min(1).required(),
   mergeCommitSha: sha,
@@ -62,7 +74,7 @@ export const survivalSchema = Joi.object({
     .max(MAX_SURVIVAL_FILES)
     .items(
       Joi.object({
-        path: Joi.string().min(1).max(500).required(),
+        path: Joi.string().min(1).max(MAX_PATH_LENGTH).required(),
         aiMerged: lines,
         aiSurviving: lines.max(Joi.ref('aiMerged')),
         deleted: Joi.boolean().required()

@@ -1,3 +1,5 @@
+import { DAY_MS, HOUR_MS } from '#/common/helpers/time.js'
+import { DEFAULT_SPRINT_LENGTH_DAYS } from '#/schemas/project.js'
 import { findProject } from '#/services/projects.js'
 import { PAYLOADS_COLLECTION } from '#/services/payloads.js'
 import { listSurvival } from '#/services/survival.js'
@@ -5,7 +7,14 @@ import { listSurvival } from '#/services/survival.js'
 // ADR 0005 D10: above this share of AI lines rewritten within the window, the
 // delivered volume is discounted by (1 − CCR).
 export const CHURN_PENALTY_THRESHOLD_PERCENT = 25
+const CHURN_WINDOW_DAYS = 21
 const ORIGINS = ['aiAgent', 'aiCompletion', 'aiChat']
+const MIN_SCORE = 1
+const MAX_SCORE = 100
+// Upper score bound of each band; anything above the last is XL.
+const BAND_LIMITS = Object.entries({ XS: 20, S: 40, M: 60, L: 80 })
+const BULK_BATCH_SIZE = 500
+const DEFAULT_ADOPTION_DATE = '2026-01-01T00:00:00.000Z'
 
 const round1 = (value) => Math.round(value * 10) / 10
 const round3 = (value) => Math.round(value * 1000) / 1000
@@ -14,11 +23,13 @@ const churnPercent = (merged, surviving) =>
 
 // PR coding cycle time (metrics.md): last minus first counted commit, in hours.
 export function codingCycleHours(p) {
-  if (Number(p.codingCycleTimeHours) > 0) return Number(p.codingCycleTimeHours)
+  if (Number(p.codingCycleTimeHours) > 0) {
+    return Number(p.codingCycleTimeHours)
+  }
   const first = new Date(p.firstCommitAt).getTime()
   const last = new Date(p.lastCommitAt).getTime()
   return Number.isFinite(first) && Number.isFinite(last) && last > first
-    ? (last - first) / 3600000
+    ? (last - first) / HOUR_MS
     : 0
 }
 
@@ -49,22 +60,22 @@ export function computeComplexityScore(
   const M = Math.max(0, Number(files.modulesTouched) || 0)
 
   if (L > m.hardCapLines || F > m.hardCapFiles) {
-    return { score: 100, band: 'XL', version: m.version, inputs: { L, F, M } }
+    return {
+      score: MAX_SCORE,
+      band: 'XL',
+      version: m.version,
+      inputs: { L, F, M }
+    }
   }
 
   const raw =
-    1 +
-    99 *
+    MIN_SCORE +
+    (MAX_SCORE - MIN_SCORE) *
       (w.lines * sat(L, m.lineCap) +
         w.files * sat(F, m.fileCap) +
         w.modules * sat(M, m.moduleCap))
-  const score = Math.min(100, Math.max(1, Math.round(raw)))
-
-  let band = 'XL'
-  if (score <= 20) band = 'XS'
-  else if (score <= 40) band = 'S'
-  else if (score <= 60) band = 'M'
-  else if (score <= 80) band = 'L'
+  const score = Math.min(MAX_SCORE, Math.max(MIN_SCORE, Math.round(raw)))
+  const band = BAND_LIMITS.find(([, limit]) => score <= limit)?.[0] ?? 'XL'
 
   return { score, band, version: m.version, inputs: { L, F, M } }
 }
@@ -76,7 +87,9 @@ export async function recomputeComplexity(db) {
     .collection('projects')
     .find({}, { projection: { slug: 1, complexity: 1 } })
     .toArray()
-  for (const p of projects) models.set(p.slug, p.complexity)
+  for (const p of projects) {
+    models.set(p.slug, p.complexity)
+  }
 
   const collection = db.collection(PAYLOADS_COLLECTION)
   const cursor = collection.find(
@@ -93,7 +106,7 @@ export async function recomputeComplexity(db) {
     batch.push({
       updateOne: { filter: { _id: doc._id }, update: { $set: { complexity } } }
     })
-    if (batch.length === 500) {
+    if (batch.length === BULK_BATCH_SIZE) {
       updated += (await collection.bulkWrite(batch)).modifiedCount
       batch = []
     }
@@ -105,7 +118,9 @@ export async function recomputeComplexity(db) {
 }
 
 function median(values) {
-  if (!values.length) return 0
+  if (!values.length) {
+    return 0
+  }
   const sorted = [...values].sort((a, b) => a - b)
   const mid = Math.floor(sorted.length / 2)
   return sorted.length % 2 !== 0
@@ -126,6 +141,85 @@ export function prReworkRatio(p) {
 
 const BANDS = ['XS', 'S', 'M', 'L', 'XL']
 
+// Only merged work counts: an open PR has no finished cycle to compare.
+function splitCohorts(payloads, adoptionDate, { from, to }) {
+  const baseline = []
+  const adopted = []
+  const inWindow = (merged) =>
+    (!from || merged >= new Date(from)) && (!to || merged < new Date(to))
+  for (const p of payloads.filter((payload) => payload.prMergedAt)) {
+    const merged = new Date(p.prMergedAt)
+    const scored = {
+      ...p,
+      complexity: p.complexity || computeComplexityScore(p.files || {})
+    }
+    if (merged < adoptionDate) {
+      baseline.push(scored)
+    } else if (inWindow(merged)) {
+      adopted.push(scored)
+    } else {
+      // Adopted-era PRs outside the window are not compared.
+    }
+  }
+  return { baseline, adopted }
+}
+
+const medianOf = (prs, measure, keep) => median(prs.map(measure).filter(keep))
+const positive = (value) => value > 0
+const measured = (value) => value !== null
+
+function compareBand(band, baseline, adopted) {
+  const baseInBand = baseline.filter((p) => p.complexity.band === band)
+  const adoptInBand = adopted.filter((p) => p.complexity.band === band)
+  const baseMedCycle = medianOf(baseInBand, codingCycleHours, positive)
+  const adoptMedCycle = medianOf(adoptInBand, codingCycleHours, positive)
+  const baseMedRework = medianOf(baseInBand, prReworkRatio, measured)
+  const adoptMedRework = medianOf(adoptInBand, prReworkRatio, measured)
+  const speedup =
+    baseMedCycle > 0 && adoptMedCycle > 0 ? baseMedCycle / adoptMedCycle : 1
+  return {
+    weight: adoptInBand.length,
+    speedup,
+    baseMedRework,
+    adoptMedRework,
+    summary: {
+      baselineCount: baseInBand.length,
+      adoptedCount: adoptInBand.length,
+      baselineMedianCycleHours: baseMedCycle,
+      adoptedMedianCycleHours: adoptMedCycle,
+      baselineMedianReworkRatio: Number(baseMedRework.toFixed(2)),
+      adoptedMedianReworkRatio: Number(adoptMedRework.toFixed(2)),
+      speedup: Number(speedup.toFixed(2)),
+      comparable:
+        baseInBand.length >= MIN_BAND_SAMPLE &&
+        adoptInBand.length >= MIN_BAND_SAMPLE
+    }
+  }
+}
+
+// Direct standardisation: each comparable band counts by its share of the adopted cohort.
+function standardise(bands) {
+  const comparable = bands.filter((b) => b.summary.comparable)
+  const weight = comparable.reduce((sum, b) => sum + b.weight, 0)
+  const weighted = (pick) =>
+    Number(
+      (
+        comparable.reduce((sum, b) => sum + pick(b) * b.weight, 0) / weight
+      ).toFixed(2)
+    )
+  if (comparable.length === 0) {
+    return { comparableBands: 0, score: null, rework: null }
+  }
+  return {
+    comparableBands: comparable.length,
+    score: weighted((b) => b.speedup),
+    rework: {
+      baseline: weighted((b) => b.baseMedRework),
+      adopted: weighted((b) => b.adoptMedRework)
+    }
+  }
+}
+
 /**
  * Copilot Leverage v2 (ADR 0004). Merged PRs before the adoption date are the
  * baseline and merged PRs in the window the adopted cohort. Within each
@@ -140,11 +234,13 @@ export async function computeLeverageV2(
   { from, to, repository } = {}
 ) {
   const project = await findProject(db, projectSlug)
-  if (!project) return null
+  if (!project) {
+    return null
+  }
 
-  const adoptionDate = project.adoptionStartDate
-    ? new Date(project.adoptionStartDate)
-    : new Date('2026-01-01T00:00:00.000Z')
+  const adoptionDate = new Date(
+    project.adoptionStartDate ?? DEFAULT_ADOPTION_DATE
+  )
 
   const payloads = await db
     .collection(PAYLOADS_COLLECTION)
@@ -152,74 +248,12 @@ export async function computeLeverageV2(
     .sort({ calculatedAt: -1 })
     .toArray()
 
-  const baseline = []
-  const adopted = []
-
-  for (const p of payloads) {
-    // Only merged work counts: an open PR has no finished cycle to compare.
-    if (!p.prMergedAt) continue
-    const merged = new Date(p.prMergedAt)
-    const complexity = p.complexity || computeComplexityScore(p.files || {})
-
-    if (merged < adoptionDate) {
-      baseline.push({ ...p, complexity })
-    } else {
-      if (from && merged < new Date(from)) continue
-      if (to && merged >= new Date(to)) continue
-      adopted.push({ ...p, complexity })
-    }
-  }
-
-  const bandComparison = {}
-  let weightedSpeedup = 0
-  let weightedBaselineRework = 0
-  let weightedAdoptedRework = 0
-  let weight = 0
-  let comparableBands = 0
-
-  for (const band of BANDS) {
-    const baseInBand = baseline.filter((p) => p.complexity.band === band)
-    const adoptInBand = adopted.filter((p) => p.complexity.band === band)
-
-    const baseMedCycle = median(
-      baseInBand.map(codingCycleHours).filter((c) => c > 0)
-    )
-    const adoptMedCycle = median(
-      adoptInBand.map(codingCycleHours).filter((c) => c > 0)
-    )
-    const baseMedRework = median(
-      baseInBand.map(prReworkRatio).filter((r) => r !== null)
-    )
-    const adoptMedRework = median(
-      adoptInBand.map(prReworkRatio).filter((r) => r !== null)
-    )
-    const speedup =
-      baseMedCycle > 0 && adoptMedCycle > 0 ? baseMedCycle / adoptMedCycle : 1
-
-    const comparable =
-      baseInBand.length >= MIN_BAND_SAMPLE &&
-      adoptInBand.length >= MIN_BAND_SAMPLE
-    bandComparison[band] = {
-      baselineCount: baseInBand.length,
-      adoptedCount: adoptInBand.length,
-      baselineMedianCycleHours: baseMedCycle,
-      adoptedMedianCycleHours: adoptMedCycle,
-      baselineMedianReworkRatio: Number(baseMedRework.toFixed(2)),
-      adoptedMedianReworkRatio: Number(adoptMedRework.toFixed(2)),
-      speedup: Number(speedup.toFixed(2)),
-      comparable
-    }
-
-    if (comparable) {
-      const w = adoptInBand.length
-      weightedSpeedup += speedup * w
-      weightedBaselineRework += baseMedRework * w
-      weightedAdoptedRework += adoptMedRework * w
-      weight += w
-      comparableBands += 1
-    }
-  }
-
+  const { baseline, adopted } = splitCohorts(payloads, adoptionDate, {
+    from,
+    to
+  })
+  const bands = BANDS.map((band) => compareBand(band, baseline, adopted))
+  const { comparableBands, score, rework } = standardise(bands)
   const enoughData = comparableBands > 0
 
   return {
@@ -227,18 +261,13 @@ export async function computeLeverageV2(
     ...(repository ? { repository } : {}),
     adoptionStartDate: adoptionDate.toISOString(),
     // null, not 1.0, when nothing is comparable: "no change" would be a claim.
-    overallLeverageScore: enoughData
-      ? Number((weightedSpeedup / weight).toFixed(2))
-      : null,
+    overallLeverageScore: score,
     enoughData,
     comparableBands,
-    standardisedReworkRatio: enoughData
-      ? {
-          baseline: Number((weightedBaselineRework / weight).toFixed(2)),
-          adopted: Number((weightedAdoptedRework / weight).toFixed(2))
-        }
-      : null,
-    bandComparison,
+    standardisedReworkRatio: rework,
+    bandComparison: Object.fromEntries(
+      BANDS.map((band, i) => [band, bands[i].summary])
+    ),
     sampleSize: { baseline: baseline.length, adopted: adopted.length }
   }
 }
@@ -253,7 +282,7 @@ export async function computeLeverageV2(
 export async function computeCodeChurn(
   db,
   projectSlug,
-  { windowDays = 21, from, to } = {}
+  { windowDays = CHURN_WINDOW_DAYS, from, to } = {}
 ) {
   const days = Number(windowDays)
   const records = await listSurvival(db, {
@@ -317,13 +346,61 @@ export async function computeCodeChurn(
   }
 }
 
+// Own baseline: the project's first N sprints of activity (ADR 0004).
+function ownBaseline(project, all, inWindow, time, baselineSprintCount) {
+  const cadenceMs =
+    (project.sprintCalendar?.cadenceDays ?? DEFAULT_SPRINT_LENGTH_DAYS) * DAY_MS
+  const baselineEnd = all.length
+    ? time(all[0]) + Number(baselineSprintCount) * cadenceMs
+    : 0
+  const cycles = (prs) => prs.map(codingCycleHours).filter(positive)
+  const baselineCycles = cycles(all.filter((p) => time(p) < baselineEnd))
+  const currentCycles = cycles(inWindow.filter((p) => time(p) >= baselineEnd))
+  const baselineMedian = median(baselineCycles)
+  const currentMedian = median(currentCycles)
+  const comparable =
+    baselineCycles.length >= MIN_BAND_SAMPLE &&
+    currentCycles.length >= MIN_BAND_SAMPLE
+  return {
+    baselineSprintCount: Number(baselineSprintCount),
+    baselineMedianCycleHours: Number(baselineMedian.toFixed(1)),
+    currentMedianCycleHours: Number(currentMedian.toFixed(1)),
+    baselineCount: baselineCycles.length,
+    currentCount: currentCycles.length,
+    comparable,
+    speedup:
+      comparable && currentMedian > 0
+        ? Number((baselineMedian / currentMedian).toFixed(2))
+        : null
+  }
+}
+
+// Survival of AI lines after merge (ADR 0007); unavailable until one PR is measured.
+function codeDurability(churn) {
+  if (!churn.available) {
+    return { available: false }
+  }
+  return {
+    available: true,
+    windowDays: churn.windowDays,
+    prCount: churn.prCount,
+    aiSurvivalPercent: round1(MAX_SCORE - churn.churnRatePercent),
+    humanSurvivalPercent:
+      churn.humanChurnPercent === null
+        ? null
+        : round1(MAX_SCORE - churn.humanChurnPercent)
+  }
+}
+
 export async function computeAiNativeDeliveryLeverage(
   db,
   projectSlug,
   { baselineSprintCount = 3, from, to } = {}
 ) {
   const project = await findProject(db, projectSlug)
-  if (!project) return null
+  if (!project) {
+    return null
+  }
 
   // Last commit, not analysis time: a backfill analyses months of PRs at once.
   const time = (p) => new Date(p.lastCommitAt ?? p.calculatedAt).getTime()
@@ -335,25 +412,6 @@ export async function computeAiNativeDeliveryLeverage(
       (!from || time(p) >= new Date(from).getTime()) &&
       (!to || time(p) < new Date(to).getTime())
   )
-
-  // Own baseline: the project's first N sprints of activity (ADR 0004).
-  const cadenceMs = (project.sprintCalendar?.cadenceDays ?? 14) * 86400000
-  const baselineEnd = all.length
-    ? time(all[0]) + Number(baselineSprintCount) * cadenceMs
-    : 0
-  const baselineCycles = all
-    .filter((p) => time(p) < baselineEnd)
-    .map(codingCycleHours)
-    .filter((h) => h > 0)
-  const currentCycles = inWindow
-    .filter((p) => time(p) >= baselineEnd)
-    .map(codingCycleHours)
-    .filter((h) => h > 0)
-  const baselineMedian = median(baselineCycles)
-  const currentMedian = median(currentCycles)
-  const comparable =
-    baselineCycles.length >= MIN_BAND_SAMPLE &&
-    currentCycles.length >= MIN_BAND_SAMPLE
 
   const complexityWeightedThroughput = inWindow
     .filter((p) => p.prMergedAt)
@@ -368,27 +426,12 @@ export async function computeAiNativeDeliveryLeverage(
   const { computeDeliveryMetrics } =
     await import('#/services/delivery-metrics.js')
   const delivery = await computeDeliveryMetrics(db, projectSlug, { from, to })
-  const churn = await computeCodeChurn(db, projectSlug, {
-    windowDays: 21,
-    from,
-    to
-  })
+  const churn = await computeCodeChurn(db, projectSlug, { from, to })
 
   return {
     projectSlug,
     projectType: project.type,
-    ownBaseline: {
-      baselineSprintCount: Number(baselineSprintCount),
-      baselineMedianCycleHours: Number(baselineMedian.toFixed(1)),
-      currentMedianCycleHours: Number(currentMedian.toFixed(1)),
-      baselineCount: baselineCycles.length,
-      currentCount: currentCycles.length,
-      comparable,
-      speedup:
-        comparable && currentMedian > 0
-          ? Number((baselineMedian / currentMedian).toFixed(2))
-          : null
-    },
+    ownBaseline: ownBaseline(project, all, inWindow, time, baselineSprintCount),
     complexityWeightedThroughput,
     mergedPullRequests: inWindow.filter((p) => p.prMergedAt).length,
     deliveryQuality: {
@@ -396,19 +439,6 @@ export async function computeAiNativeDeliveryLeverage(
       deliveryReworkRate: delivery.deliveryReworkRate,
       reopenRate: delivery.reopenRate
     },
-    // Survival of AI lines 21 days after merge (ADR 0007); unavailable until
-    // the survival workflow has measured at least one pull request.
-    codeDurability: churn.available
-      ? {
-          available: true,
-          windowDays: churn.windowDays,
-          prCount: churn.prCount,
-          aiSurvivalPercent: round1(100 - churn.churnRatePercent),
-          humanSurvivalPercent:
-            churn.humanChurnPercent === null
-              ? null
-              : round1(100 - churn.humanChurnPercent)
-        }
-      : { available: false }
+    codeDurability: codeDurability(churn)
   }
 }

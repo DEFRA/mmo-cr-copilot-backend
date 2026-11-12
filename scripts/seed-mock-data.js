@@ -1621,4 +1621,4 @@ async function seedData() {
   }
 }
 
-seedData()
+await seedData()

@@ -1,0 +1,22 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/routes/role-mappings.js",
+  "added": 3,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 3,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "1,48,85"
+  },
+  "ai": [
+    [1, "a", "325d86ba", 0],
+    [48, "a", "9199a9bd", 0],
+    [85, "a", "474019c9", 0]
+  ]
+}

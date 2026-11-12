@@ -1,5 +1,4 @@
 import Boom from '@hapi/boom'
-import Joi from 'joi'
 
 import {
   PROJECT_ROLES,
@@ -14,10 +13,7 @@ import {
   JIRA_KEY_REQUIRED_MESSAGE,
   complexityModelSchema,
   hasRequiredJiraKey,
-  prLinkParamSchema,
-  prLinkPayloadSchema,
   projectCreateSchema,
-  leverageQuerySchema,
   projectPayloadsQuerySchema,
   projectSlugParamSchema,
   projectSprintsQuerySchema,
@@ -36,26 +32,19 @@ import {
   setSprintCalendar,
   updateProject
 } from '#/services/projects.js'
-import { listProjectJiraIssues } from '#/services/jira-scope.js'
-import { ensureJiraWindowFresh } from '#/services/jira-lazy-fetch.js'
-import { ensurePrQualityGates } from '#/services/sonar-pr-gates.js'
-import { findPrLinks, setManualPrLinks } from '#/services/pr-jira-links.js'
 import { recordAuditEvent } from '#/services/audit-logs.js'
 import {
   deleteMappingsForProject,
   invalidateRoleCache
 } from '#/services/role-mappings.js'
-import { computeDeliveryMetrics } from '#/services/delivery-metrics.js'
 import {
   DEFAULT_COMPLEXITY_MODEL,
-  computeAiNativeDeliveryLeverage,
-  computeCodeChurn,
-  computeLeverageV2,
   recomputeComplexity
 } from '#/services/complexity.js'
 
 const statusCreated = 201
 const statusNoContent = 204
+const PROJECT_PATH = '/api/projects/{slug}'
 
 const actorOf = (user) => ({ oid: user.oid, name: user.name })
 
@@ -210,7 +199,7 @@ export const projectsRoutes = [
   },
   {
     method: 'GET',
-    path: '/api/projects/{slug}',
+    path: PROJECT_PATH,
     options: {
       validate: {
         params: projectSlugParamSchema
@@ -223,7 +212,7 @@ export const projectsRoutes = [
   },
   {
     method: 'PUT',
-    path: '/api/projects/{slug}',
+    path: PROJECT_PATH,
     options: {
       validate: {
         params: projectSlugParamSchema,
@@ -248,7 +237,7 @@ export const projectsRoutes = [
   },
   {
     method: 'DELETE',
-    path: '/api/projects/{slug}',
+    path: PROJECT_PATH,
     options: {
       validate: {
         params: projectSlugParamSchema
@@ -363,184 +352,6 @@ export const projectsRoutes = [
         request.logger
       )
       return h.response(presentProject(updated, role))
-    }
-  },
-  {
-    method: 'GET',
-    path: '/api/projects/{slug}/delivery-metrics',
-    options: {
-      validate: {
-        params: projectSlugParamSchema,
-        query: projectPayloadsQuerySchema
-      }
-    },
-    handler: async (request, h) => {
-      const project = await findProject(request.db, request.params.slug)
-      if (!project || project.archivedAt) {
-        throw Boom.notFound(`Project '${request.params.slug}' not found`)
-      }
-      assertProjectRole(request, project)
-      const jira = await ensureJiraWindowFresh({
-        db: request.db,
-        client: request.server.jira,
-        project,
-        from: request.query.from,
-        to: request.query.to,
-        logger: request.logger
-      })
-      const metrics = await computeDeliveryMetrics(
-        request.db,
-        request.params.slug,
-        request.query,
-        {
-          prGates: (prs) =>
-            ensurePrQualityGates({
-              db: request.db,
-              sonar: request.server.sonar,
-              prs,
-              logger: request.logger
-            })
-        }
-      )
-      return h.response({ ...metrics, jira })
-    }
-  },
-  {
-    method: 'GET',
-    path: '/api/projects/{slug}/jira-issues',
-    options: {
-      validate: {
-        params: projectSlugParamSchema
-      }
-    },
-    handler: async (request, h) => {
-      const project = await findProject(request.db, request.params.slug)
-      if (!project || project.archivedAt) {
-        throw Boom.notFound(`Project '${request.params.slug}' not found`)
-      }
-      assertProjectRole(request, project)
-      const issues = await listProjectJiraIssues(request.db, project)
-      return h.response({ issues })
-    }
-  },
-  {
-    method: 'GET',
-    path: '/api/projects/{slug}/leverage-v2',
-    options: {
-      validate: {
-        params: projectSlugParamSchema,
-        query: leverageQuerySchema
-      }
-    },
-    handler: async (request, h) => {
-      await readableProject(request)
-      return h.response(
-        await computeLeverageV2(request.db, request.params.slug, request.query)
-      )
-    }
-  },
-  {
-    method: 'GET',
-    path: '/api/projects/{slug}/churn',
-    options: {
-      validate: {
-        params: projectSlugParamSchema,
-        query: Joi.object({
-          windowDays: Joi.number().integer().min(1).max(90).default(21),
-          from: Joi.date().iso().optional(),
-          to: Joi.date().iso().optional()
-        }).unknown()
-      }
-    },
-    handler: async (request, h) => {
-      await readableProject(request)
-      return h.response(
-        await computeCodeChurn(request.db, request.params.slug, request.query)
-      )
-    }
-  },
-  {
-    method: 'GET',
-    path: '/api/projects/{slug}/ai-native-leverage',
-    options: {
-      validate: {
-        params: projectSlugParamSchema,
-        query: projectPayloadsQuerySchema
-      }
-    },
-    handler: async (request, h) => {
-      const project = await readableProject(request)
-      await ensureJiraWindowFresh({
-        db: request.db,
-        client: request.server.jira,
-        project,
-        from: request.query.from,
-        to: request.query.to,
-        logger: request.logger
-      })
-      return h.response(
-        await computeAiNativeDeliveryLeverage(
-          request.db,
-          request.params.slug,
-          request.query
-        )
-      )
-    }
-  },
-  {
-    method: 'GET',
-    path: '/api/projects/{slug}/pr-links/{repository}/{prNumber}',
-    options: { validate: { params: prLinkParamSchema } },
-    handler: async (request, h) => {
-      const project = await findProject(request.db, request.params.slug)
-      if (!project || project.archivedAt) {
-        throw Boom.notFound(`Project '${request.params.slug}' not found`)
-      }
-      assertProjectRole(request, project)
-      const links = await findPrLinks(request.db, {
-        projectSlug: project.slug,
-        repository: request.params.repository,
-        prNumber: request.params.prNumber
-      })
-      return h.response({ links })
-    }
-  },
-  {
-    method: 'PUT',
-    path: '/api/projects/{slug}/pr-links/{repository}/{prNumber}',
-    options: {
-      validate: { params: prLinkParamSchema, payload: prLinkPayloadSchema }
-    },
-    handler: async (request, h) => {
-      const { project, user } = await loadProject(request, PROJECT_ROLES.admin)
-      const auth = { user }
-      const { repository, prNumber } = request.params
-      const { before, after } = await setManualPrLinks(request.db, {
-        projectSlug: project.slug,
-        repository,
-        prNumber,
-        jiraKeys: request.payload.jiraKeys
-      })
-      await recordAuditEvent(
-        request.db,
-        {
-          action: 'pr-jira-links.updated',
-          entity: 'pr-jira-links',
-          entityId: `${repository}#${prNumber}`,
-          projectSlug: project.slug,
-          summary: `Jira links for ${repository} #${prNumber} changed`,
-          before,
-          after,
-          actor: { oid: auth.user.oid, name: auth.user.name }
-        },
-        request.logger
-      )
-      const links = await findPrLinks(request.db, {
-        projectSlug: project.slug,
-        repository,
-        prNumber
-      })
-      return h.response({ links })
     }
   }
 ]

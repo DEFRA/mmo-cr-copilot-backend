@@ -12,11 +12,19 @@ import {
 } from '#/services/workflow-stages.js'
 
 const CATEGORY_ORDER = { new: 0, indeterminate: 1, done: 2 }
-const categoryRank = (key) => CATEGORY_ORDER[key] ?? 3
+const UNKNOWN_CATEGORY_RANK = Object.keys(CATEGORY_ORDER).length
+const categoryRank = (key) => CATEGORY_ORDER[key] ?? UNKNOWN_CATEGORY_RANK
 const projectKeysOf = (project) =>
   (project?.jira?.projectKeys ?? []).filter((key) =>
     JIRA_PROJECT_KEY_PATTERN.test(key)
   )
+
+async function statusesForKeys(client, project) {
+  const perKey = await Promise.all(
+    projectKeysOf(project).map((key) => client.getProjectStatuses(key))
+  )
+  return perKey.flat()
+}
 
 /**
  * Saves a project's workflow if it is still at `version` (0 when nothing is
@@ -57,7 +65,9 @@ export async function saveProjectWorkflow(
     const active = await db
       .collection(PROJECTS_COLLECTION)
       .findOne({ slug, archivedAt: null }, { projection: { _id: 1 } })
-    if (!active) throw Boom.notFound(`Project '${slug}' not found`)
+    if (!active) {
+      throw Boom.notFound(`Project '${slug}' not found`)
+    }
     throw Boom.conflict(
       'The Jira workflow was changed by someone else. Reload to see the latest version.'
     )
@@ -75,21 +85,22 @@ export async function saveProjectWorkflow(
  */
 export async function detectProjectStatuses(client, project, logger) {
   try {
-    const detected = []
-    const seen = new Set()
-    for (const key of projectKeysOf(project)) {
-      for (const status of await client.getProjectStatuses(key)) {
-        const name = tidyStatus(status.name)
-        const normalised = normaliseStatus(name)
-        if (!name || name.length > MAX_STATUS_LENGTH || seen.has(normalised)) {
-          continue
-        }
-        seen.add(normalised)
-        detected.push({ name, categoryKey: status.categoryKey ?? null })
-        if (detected.length >= MAX_DETECTED_STATUSES) return detected
+    const detected = new Map()
+    for (const status of await statusesForKeys(client, project)) {
+      const name = tidyStatus(status.name)
+      const normalised = normaliseStatus(name)
+      if (
+        name &&
+        name.length <= MAX_STATUS_LENGTH &&
+        !detected.has(normalised)
+      ) {
+        detected.set(normalised, {
+          name,
+          categoryKey: status.categoryKey ?? null
+        })
       }
     }
-    return detected
+    return [...detected.values()].slice(0, MAX_DETECTED_STATUSES)
   } catch (err) {
     logger.warn(
       { err },
@@ -115,8 +126,12 @@ async function observedStatuses(db, project) {
       current.set(name, entry)
     }
     for (const change of issue.statusHistory ?? []) {
-      if (change.from) history.add(change.from)
-      if (change.to) history.add(change.to)
+      if (change.from) {
+        history.add(change.from)
+      }
+      if (change.to) {
+        history.add(change.to)
+      }
     }
   }
   return [
@@ -130,10 +145,7 @@ async function liveJiraStatuses(project, client, logger) {
     return { jiraConfigured: false, jiraAvailable: false, statuses: [] }
   }
   try {
-    const statuses = []
-    for (const key of projectKeysOf(project)) {
-      statuses.push(...(await client.getProjectStatuses(key)))
-    }
+    const statuses = await statusesForKeys(client, project)
     return { jiraConfigured: true, jiraAvailable: true, statuses }
   } catch (err) {
     logger.warn({ err }, 'Jira project statuses unavailable')
@@ -154,7 +166,9 @@ export async function listProjectStatuses(db, project, client, logger) {
   const entry = (rawName) => {
     const name = tidyStatus(rawName)
     const key = normaliseStatus(name)
-    if (!name || name.length > MAX_STATUS_LENGTH) return null
+    if (!name || name.length > MAX_STATUS_LENGTH) {
+      return null
+    }
     if (!merged.has(key)) {
       merged.set(key, {
         name,
@@ -168,20 +182,28 @@ export async function listProjectStatuses(db, project, client, logger) {
   }
   const fromJira = (status) => {
     const found = entry(status.name)
-    if (!found) return
-    if (!found.inJira) found.name = tidyStatus(status.name)
+    if (!found) {
+      return
+    }
+    if (!found.inJira) {
+      found.name = tidyStatus(status.name)
+    }
     found.inJira = true
     if (CATEGORY_ORDER[status.categoryKey] !== undefined) {
       found.categoryKey = status.categoryKey
     }
-    if (status.issueType) found.issueTypes.add(status.issueType)
+    if (status.issueType) {
+      found.issueTypes.add(status.issueType)
+    }
   }
 
   live.statuses.forEach(fromJira)
   ;(project.jira?.detectedStatuses ?? []).forEach(fromJira)
   for (const status of observed) {
     const found = entry(status.name)
-    if (!found) continue
+    if (!found) {
+      continue
+    }
     found.issueCount += status.issueCount
     if (
       !found.categoryKey &&
@@ -192,7 +214,10 @@ export async function listProjectStatuses(db, project, client, logger) {
   }
 
   const statuses = [...merged.values()]
-    .map((s) => ({ ...s, issueTypes: [...s.issueTypes].sort() }))
+    .map((s) => ({
+      ...s,
+      issueTypes: [...s.issueTypes].sort((a, b) => a.localeCompare(b))
+    }))
     .sort(
       (a, b) =>
         categoryRank(a.categoryKey) - categoryRank(b.categoryKey) ||

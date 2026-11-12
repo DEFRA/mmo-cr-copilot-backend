@@ -50,7 +50,9 @@ export const jiraWorkflowPayloadSchema = Joi.object({
 /** Like the global failAction, but a broken workflow rule is shown to the admin. */
 export function workflowFailAction(request, h, error) {
   const broken = error?.details?.find((d) => d.type === WORKFLOW_RULE)
-  if (!broken) return failAction(request, h, error)
+  if (!broken) {
+    return failAction(request, h, error)
+  }
   request.logger.warn(
     { validation: { paths: [{ path: 'stages', type: WORKFLOW_RULE }] } },
     'Request failed validation'
