@@ -12,7 +12,8 @@ export const AUDIT_ENTITIES = {
   jiraWorkflow: 'jira-workflow',
   personaMapping: 'persona-mapping',
   repositoryMapping: 'repository-mapping',
-  roleMapping: 'role-mapping'
+  roleMapping: 'role-mapping',
+  sprintCalendar: 'sprint-calendar'
 }
 
 export const AUDIT_ACTIONS = {
@@ -25,7 +26,8 @@ export const AUDIT_ACTIONS = {
   repositorySonarKeyCleared: 'repository.sonar-key.cleared',
   roleMappingCreated: 'role-mapping.created',
   roleMappingUpdated: 'role-mapping.updated',
-  roleMappingDeleted: 'role-mapping.deleted'
+  roleMappingDeleted: 'role-mapping.deleted',
+  sprintCalendarUpdated: 'sprint-calendar.updated'
 }
 
 const MAX_PAGE_SIZE = 200

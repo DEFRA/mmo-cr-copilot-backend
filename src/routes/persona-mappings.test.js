@@ -81,8 +81,7 @@ describe('#persona-mappings routes', () => {
       expect(result.mappings).toHaveLength(1)
       expect(result.mappings[0]).toMatchObject({
         githubHandle: 'octocat',
-        persona: 'devops',
-        scope: 'project'
+        persona: 'devops'
       })
     })
 

@@ -145,6 +145,7 @@ git config --global core.autocrlf false
 | `GET: /api/sonar/pr?repository=&prNumber=`                                         | New code quality metrics for one pull request                      |
 | `GET/PUT: /api/projects/{slug}/jira/workflow`                                      | The project's Jira workflow stages (Project or Dashboard Admin)    |
 | `GET: /api/projects/{slug}/jira/statuses`                                          | Jira statuses seen, detected and live (Project or Dashboard Admin) |
+| `PUT: /api/projects/{slug}/sprint-calendar`                                        | Set the sprint length and a sprint start (Project or Dashboard Admin) |
 | Every route except `GET /health`, `POST /api/payloads`, `POST /api/survival` and   |
 | `GET /api/ingest/repositories/{fullName}` requires a valid Entra access token. See |
 | [Authentication](#authentication).                                                 |

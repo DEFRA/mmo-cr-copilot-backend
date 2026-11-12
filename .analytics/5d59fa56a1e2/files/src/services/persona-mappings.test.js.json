@@ -1,0 +1,24 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/services/persona-mappings.test.js",
+  "added": 5,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 5,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "36,95,114-115,144"
+  },
+  "ai": [
+    [36, "a", "d19f7372", 0],
+    [95, "a", "48b954c6", 0],
+    [114, "a", "34120deb", 0],
+    [115, "a", "8bc6268f", 0],
+    [144, "a", "3ba40561", 0]
+  ]
+}

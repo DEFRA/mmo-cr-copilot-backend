@@ -159,6 +159,18 @@ export async function updateProject(db, slug, updateData) {
   return result ? toProject(result) : null
 }
 
+// Replaces an active project's sprint calendar; null when the project is gone.
+export async function setSprintCalendar(db, slug, sprintCalendar) {
+  const result = await db
+    .collection(PROJECTS_COLLECTION)
+    .findOneAndUpdate(
+      { slug, archivedAt: null },
+      { $set: { sprintCalendar, updatedAt: new Date() } },
+      { returnDocument: 'after' }
+    )
+  return result ? toProject(result) : null
+}
+
 // Soft-deletes a project by setting archivedAt and updatedAt.
 export async function deleteProject(db, slug) {
   const now = new Date()

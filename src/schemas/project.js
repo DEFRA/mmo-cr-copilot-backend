@@ -118,6 +118,12 @@ export const projectSprintsQuerySchema = Joi.object({
   count: Joi.number().integer().min(1).max(50).default(5).optional()
 }).options({ stripUnknown: true })
 
+// Set by a project admin from Settings → JIRA; both fields are required.
+export const sprintCalendarSchema = Joi.object({
+  cadenceDays: Joi.number().integer().min(1).max(30).required(),
+  anchorDate: Joi.date().iso().required()
+}).options({ stripUnknown: true })
+
 export const JIRA_ISSUE_KEY_PATTERN = /^[A-Z][A-Z0-9_]+-\d+$/
 
 export const prLinkParamSchema = Joi.object({

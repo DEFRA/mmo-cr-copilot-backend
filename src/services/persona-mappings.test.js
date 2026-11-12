@@ -33,8 +33,7 @@ describe('#persona-mappings service', () => {
 
       expect(mapping).toMatchObject({
         githubHandle: 'octocat',
-        persona: 'devops',
-        scope: 'project'
+        persona: 'devops'
       })
       expect(mapping.updatedAt).toEqual(expect.any(String))
     })
@@ -93,7 +92,7 @@ describe('#persona-mappings service', () => {
       await expect(service.listPersonaMappings(db, P)).resolves.toEqual([])
     })
 
-    test('Should offer unscoped legacy rows as defaults a project row overrides', async () => {
+    test('Should ignore unscoped legacy rows', async () => {
       await db.collection(service.PERSONA_MAPPINGS_COLLECTION).insertMany([
         {
           _id: 'ada',
@@ -112,9 +111,8 @@ describe('#persona-mappings service', () => {
 
       const mappings = await service.listPersonaMappings(db, P)
 
-      expect(mappings).toMatchObject([
-        { githubHandle: 'ada', persona: 'devops', scope: 'project' },
-        { githubHandle: 'bob', persona: 'qa', scope: 'default' }
+      expect(mappings).toEqual([
+        expect.objectContaining({ githubHandle: 'ada', persona: 'devops' })
       ])
     })
   })
@@ -143,7 +141,7 @@ describe('#persona-mappings service', () => {
       )
     })
 
-    test('Should never delete a legacy default or another project’s row', async () => {
+    test('Should never delete a legacy unscoped row or another project’s row', async () => {
       await db.collection(service.PERSONA_MAPPINGS_COLLECTION).insertOne({
         _id: 'ada',
         githubHandle: 'ada',

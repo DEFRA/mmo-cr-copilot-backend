@@ -1,0 +1,23 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/schemas/audit-log.js",
+  "added": 4,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 4,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "15-16,29-30"
+  },
+  "ai": [
+    [15, "a", "e057d35c", 0],
+    [16, "a", "065b7642", 0],
+    [29, "a", "d657b80b", 0],
+    [30, "a", "816b1e65", 0]
+  ]
+}
