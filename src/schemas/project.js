@@ -11,7 +11,8 @@ export const SONAR_PROJECT_KEY_PATTERN = /^[\w.:-]+$/
 
 export const AI_NATIVE_JIRA_KEY_MESSAGE =
   'AI-Native projects require exactly one Jira project key'
-export const JIRA_KEY_FIXED_MESSAGE = 'The Jira project key cannot be changed'
+export const JIRA_KEY_REQUIRED_MESSAGE =
+  'The Jira project key cannot be removed'
 
 // Trimmed; '' and null both mean "no key" and are stored as null.
 const sonarProjectKey = Joi.string()

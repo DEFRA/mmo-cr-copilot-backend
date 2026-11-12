@@ -221,30 +221,57 @@ describe('#projects service', () => {
       expect(stored.jira.storyPointsFieldDetectedAt).toBeNull()
     })
 
-    test('Should refuse a first Jira key once another write has set one', async () => {
+    test('Should refuse a Jira key change when another write changed the key first', async () => {
       await db.collection(service.PROJECTS_COLLECTION).insertOne({
         slug: 'RACE',
         name: 'Race',
         jira: { projectKeys: ['WON'] }
       })
+      const projects = db.collection(service.PROJECTS_COLLECTION)
+      // The key read by this write is already stale when it lands.
+      const staleDb = {
+        collection: () => ({
+          updateOne: (...args) => projects.updateOne(...args),
+          findOne: async () => ({ jira: { projectKeys: ['OLD'] } }),
+          findOneAndUpdate: (...args) => projects.findOneAndUpdate(...args)
+        })
+      }
 
       await expect(
-        service.updateProject(db, 'RACE', {
+        service.updateProject(staleDb, 'RACE', {
           name: 'Lost',
           jira: { projectKeys: ['LOST'] }
         })
       ).rejects.toMatchObject({
         output: {
-          statusCode: 400,
-          payload: { message: 'The Jira project key cannot be changed' }
+          statusCode: 409,
+          payload: {
+            message: 'The Jira project key was changed by someone else'
+          }
         }
       })
-      const stored = await db
-        .collection(service.PROJECTS_COLLECTION)
-        .findOne({ slug: 'RACE' })
+      const stored = await projects.findOne({ slug: 'RACE' })
       expect(stored).toMatchObject({
         name: 'Race',
         jira: { projectKeys: ['WON'] }
+      })
+    })
+
+    test('Should keep derived Jira state when the same key is sent again', async () => {
+      const lastSyncedAt = new Date('2026-10-01T09:00:00.000Z')
+      await db.collection(service.PROJECTS_COLLECTION).insertOne({
+        slug: 'SAME',
+        jira: { projectKeys: ['KEY'], boardId: 3, lastSyncedAt }
+      })
+
+      const updated = await service.updateProject(db, 'SAME', {
+        jira: { projectKeys: ['KEY'] }
+      })
+
+      expect(updated.jira).toEqual({
+        projectKeys: ['KEY'],
+        boardId: 3,
+        lastSyncedAt
       })
     })
 

@@ -434,7 +434,7 @@ describe('#projects routes', () => {
       })
     const nativeKeyMessage =
       'AI-Native projects require exactly one Jira project key'
-    const fixedKeyMessage = 'The Jira project key cannot be changed'
+    const removedKeyMessage = 'The Jira project key cannot be removed'
     const storedKeys = async (slug) =>
       (await db.collection(PROJECTS_COLLECTION).findOne({ slug })).jira
         .projectKeys
@@ -480,21 +480,59 @@ describe('#projects routes', () => {
       expect(result.message).toBe(nativeKeyMessage)
     })
 
-    test.each([
-      ['changing', ['OTHR']],
-      ['clearing', []]
-    ])('Should reject %s a set Jira key', async (_, projectKeys) => {
+    test('Should reject removing a set Jira key', async () => {
       const { statusCode, result } = await update('PUTT', {
-        jira: { projectKeys }
+        jira: { projectKeys: [] }
       })
 
       expect(statusCode).toBe(400)
       expect(result).toEqual({
         statusCode: 400,
         error: 'Bad Request',
-        message: fixedKeyMessage
+        message: removedKeyMessage
       })
       expect(await storedKeys('PUTT')).toEqual(['PUTT'])
+    })
+
+    test('Should change a set Jira key and reset state derived from the old key', async () => {
+      await db.collection(PROJECTS_COLLECTION).updateOne(
+        { slug: 'PUTT' },
+        {
+          $set: {
+            'jira.boardId': 7,
+            'jira.lastSyncedAt': new Date('2026-11-01T00:00:00.000Z'),
+            'jira.detectedStatuses': [{ name: 'Done', categoryKey: 'done' }],
+            'jira.detectedStatusesAt': new Date('2026-11-01T00:00:00.000Z'),
+            'jira.statusMapping': { version: 2, stages: [] }
+          }
+        }
+      )
+
+      const { statusCode, result } = await update('PUTT', {
+        jira: { projectKeys: ['OTHR'] }
+      })
+
+      expect(statusCode).toBe(200)
+      expect(result.jira).toEqual({
+        projectKeys: ['OTHR'],
+        lastSyncedAt: null,
+        detectedStatuses: [],
+        detectedStatusesAt: null,
+        statusMapping: { version: 2, stages: [] }
+      })
+      const audit = await db
+        .collection('audit-logs')
+        .findOne({ action: 'project.updated', 'after.jiraKey': 'OTHR' })
+      expect(audit.before).toMatchObject({ jiraKey: 'PUTT' })
+    })
+
+    test('Should keep a board sent with a changed Jira key', async () => {
+      const { statusCode, result } = await update('PUTT', {
+        jira: { projectKeys: ['OTHR'], boardId: 12 }
+      })
+
+      expect(statusCode).toBe(200)
+      expect(result.jira).toMatchObject({ projectKeys: ['OTHR'], boardId: 12 })
     })
 
     test('Should accept the same Jira key again', async () => {
@@ -547,7 +585,7 @@ describe('#projects routes', () => {
         })
       })
 
-      test('Should add a Jira key once to a project without one', async () => {
+      test('Should add a Jira key to a project without one and change it later', async () => {
         const added = await update('ADPT', { jira: { projectKeys: ['ADPT'] } })
         const changed = await update('ADPT', {
           jira: { projectKeys: ['NEWK'] }
@@ -558,9 +596,8 @@ describe('#projects routes', () => {
           type: 'ai-adopted',
           jira: { projectKeys: ['ADPT'] }
         })
-        expect(changed.statusCode).toBe(400)
-        expect(changed.result.message).toBe(fixedKeyMessage)
-        expect(await storedKeys('ADPT')).toEqual(['ADPT'])
+        expect(changed.statusCode).toBe(200)
+        expect(await storedKeys('ADPT')).toEqual(['NEWK'])
       })
 
       test('Should accept the change using the key already stored', async () => {
@@ -586,7 +623,7 @@ describe('#projects routes', () => {
         const kept = await update('ADPT', { type: 'ai-adopted' })
 
         expect(dropped.statusCode).toBe(400)
-        expect(dropped.result.message).toBe(fixedKeyMessage)
+        expect(dropped.result.message).toBe(removedKeyMessage)
         expect(kept.statusCode).toBe(200)
         expect(kept.result).toMatchObject({
           type: 'ai-adopted',

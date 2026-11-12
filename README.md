@@ -251,8 +251,9 @@ What this service does in each step:
    duplicate is `409` with the message `That project slug is already in use`. A new project's slug
    is 3 or 4 upper-case letters; existing slugs with digits keep working. An AI-Native project
    needs exactly one Jira project key, checked on every `PUT /api/projects/{slug}`; an AI-Adopted
-   project may add one later if it has none. Once set, the key never changes: a different or empty
-   `jira.projectKeys` is `400` with `The Jira project key cannot be changed`.
+   project may add one later if it has none. A set key may be changed but not removed (`400` with
+   `The Jira project key cannot be removed`); a change resets the Jira sync cursor, detected statuses
+   and board, and a concurrent change is `409` (ADR 0013).
 2. `PUT /api/repositories/{fullName}` maps a repository to one project (unique index on
    `repositories.fullName`) and re-stamps that repository's stored payloads with the project. Its
    SonarCloud key is set separately through `PUT /api/repositories/{fullName}/sonar-key`.

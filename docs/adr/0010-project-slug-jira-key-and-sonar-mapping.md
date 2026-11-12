@@ -1,6 +1,7 @@
 # 0010. Project slug, Jira project key and SonarCloud repository mapping rules
 
-- **Status:** Accepted
+- **Status:** Accepted; the fixed Jira key in §2 is superseded by
+  [ADR 0013](0013-editable-jira-project-key.md)
 - **Date:** 2026-11-05
 
 ## Context

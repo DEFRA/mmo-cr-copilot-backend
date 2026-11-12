@@ -35,6 +35,7 @@ must be raised as a formal exception with DEFRA Delivery Architecture
 | [0007](0007-ai-survival-and-usage.md)                   | AI code survival records and usage                           | Accepted          |
 | [0008](0008-role-mappings-and-authorize-endpoint.md)    | Entra token validation, role mappings and authorize endpoint | Accepted          |
 | [0009](0009-copilot-usage-ai-credits.md)                | Copilot usage in AI credits                                  | Accepted          |
-| [0010](0010-project-slug-jira-key-and-sonar-mapping.md) | Project slug, Jira project key and SonarCloud mapping rules  | Accepted          |
+| [0010](0010-project-slug-jira-key-and-sonar-mapping.md) | Project slug, Jira project key and SonarCloud mapping rules  | Partly superseded |
 | [0011](0011-jira-workflow-status-mapping.md)            | Jira workflow status mapping                                 | Partly superseded |
 | [0012](0012-lazy-pr-scoped-jira-fetch.md)               | Lazy, PR-scoped Jira fetch                                   | Accepted          |
+| [0013](0013-editable-jira-project-key.md)               | Editable Jira project key                                    | Accepted          |

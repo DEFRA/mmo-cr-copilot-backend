@@ -11,7 +11,7 @@ import {
 } from '#/common/helpers/project-access.js'
 import {
   AI_NATIVE_JIRA_KEY_MESSAGE,
-  JIRA_KEY_FIXED_MESSAGE,
+  JIRA_KEY_REQUIRED_MESSAGE,
   complexityModelSchema,
   hasRequiredJiraKey,
   prLinkParamSchema,
@@ -61,7 +61,8 @@ async function auditProject(request, user, action, after, before) {
   const pick = (p) =>
     p && {
       name: p.name,
-      type: p.type
+      type: p.type,
+      jiraKey: p.jira?.projectKeys?.[0] ?? null
     }
   await recordAuditEvent(
     request.db,
@@ -86,19 +87,12 @@ async function readableProject(request) {
 
 const presentProject = (project, role) => ({ ...project, role })
 
-const sameKeys = (a, b) =>
-  a.length === b.length && a.every((key, i) => key === b[i])
-
-// A set Jira key never changes; the type rule is checked against the project as it will be stored.
+// A set Jira key may change but not be removed; the type rule is checked against the project as it will be stored.
 function assertJiraKeyRule(existing, changes) {
   const storedKeys = existing?.jira?.projectKeys ?? []
   const requestedKeys = changes.jira?.projectKeys
-  if (
-    storedKeys.length > 0 &&
-    requestedKeys !== undefined &&
-    !sameKeys(storedKeys, requestedKeys)
-  ) {
-    throw Boom.badRequest(JIRA_KEY_FIXED_MESSAGE)
+  if (storedKeys.length > 0 && requestedKeys?.length === 0) {
+    throw Boom.badRequest(JIRA_KEY_REQUIRED_MESSAGE)
   }
   const resulting = {
     type: changes.type ?? existing?.type,

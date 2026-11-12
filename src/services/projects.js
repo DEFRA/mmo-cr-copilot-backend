@@ -1,6 +1,5 @@
 import Boom from '@hapi/boom'
 
-import { JIRA_KEY_FIXED_MESSAGE } from '#/schemas/project.js'
 import { PAYLOADS_COLLECTION, toPayload } from '#/services/payloads.js'
 
 export const PROJECTS_COLLECTION = 'projects'
@@ -10,6 +9,11 @@ export const PROJECT_SLUG_CONFLICT_MESSAGE =
   'That project slug is already in use'
 export const SONAR_KEY_CONFLICT_MESSAGE =
   'That SonarCloud project key is already in use'
+export const JIRA_KEY_CONFLICT_MESSAGE =
+  'The Jira project key was changed by someone else'
+
+const sameKeys = (a, b) =>
+  a.length === b.length && a.every((key, i) => key === b[i])
 
 const DUPLICATE_KEY_ERROR = 11000
 
@@ -124,26 +128,33 @@ export async function updateProject(db, slug, updateData) {
     )
   }
   const requestedKeys = jira?.projectKeys
-  // A set key never changes, so a concurrent first write loses here rather than overwriting.
-  const filter =
-    requestedKeys === undefined
-      ? { slug }
-      : {
-          slug,
-          $or: [
-            { 'jira.projectKeys.0': { $exists: false } },
-            { 'jira.projectKeys': requestedKeys }
-          ]
-        }
+  const $unset = {}
+  let filter = { slug }
+  if (requestedKeys !== undefined) {
+    const current = await collection.findOne(
+      { slug },
+      { projection: { 'jira.projectKeys': 1 } }
+    )
+    if (!current) return null
+    const storedKeys = current.jira?.projectKeys ?? []
+    // Pinned to the key just read, so the resets below belong to the key they replace (ADR 0013).
+    filter = storedKeys.length
+      ? { slug, 'jira.projectKeys': storedKeys }
+      : { slug, 'jira.projectKeys.0': { $exists: false } }
+    if (storedKeys.length > 0 && !sameKeys(storedKeys, requestedKeys)) {
+      $set['jira.lastSyncedAt'] = null
+      $set['jira.detectedStatuses'] = []
+      $set['jira.detectedStatusesAt'] = null
+      if (jira.boardId === undefined) $unset['jira.boardId'] = ''
+    }
+  }
   const result = await collection.findOneAndUpdate(
     filter,
-    { $set },
+    Object.keys($unset).length ? { $set, $unset } : { $set },
     { returnDocument: 'after' }
   )
   if (!result && requestedKeys !== undefined) {
-    if (await collection.findOne({ slug }, { projection: { _id: 1 } })) {
-      throw Boom.badRequest(JIRA_KEY_FIXED_MESSAGE)
-    }
+    throw Boom.conflict(JIRA_KEY_CONFLICT_MESSAGE)
   }
   return result ? toProject(result) : null
 }
