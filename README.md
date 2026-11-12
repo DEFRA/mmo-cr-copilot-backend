@@ -126,26 +126,25 @@ git config --global core.autocrlf false
 
 ## API endpoints
 
-| Endpoint                                                                           | Description                                                           |
-| :--------------------------------------------------------------------------------- | :-------------------------------------------------------------------- |
-| `GET: /health`                                                                     | Platform health check (no token)                                      |
-| `POST: /api/auth/authorize`                                                        | Sign-in check: the caller's roles, or `403` if none                   |
-| `GET: /api/auth/me`                                                                | The caller's roles and project access                                 |
-| `GET/POST/PATCH/DELETE: /api/role-mappings`                                        | Manage group-to-role mappings (Dashboard Admin only)                  |
-| `GET: /api/ingest/repositories/{fullName}`                                         | Is a repository mapped? (`x-ingest-token`)                            |
-| `POST: /api/payloads`                                                              | Ingest one analytics payload (requires `x-ingest-token`)              |
-| `POST: /api/survival`                                                              | Ingest one AI code survival record (`x-ingest-token`)                 |
-| `GET: /api/projects/{slug}/churn`                                                  | 21-day AI code churn from survival records                            |
-| `PUT: /api/repositories/{fullName}`                                                | Map a repository to a project (its SonarCloud key is kept)            |
-| `PUT: /api/repositories/{fullName}/sonar-key`                                      | Set, change or clear one repository's SonarCloud project key          |
-| `GET: /api/payloads`                                                               | Latest payload per repository and pull request                        |
-| `GET: /api/payloads/{repository}/{prNumber}`                                       | Full payload history for one pull request, newest first               |
-| `GET: /api/sonar/overview`                                                         | Gate, coverage, bugs, vulnerabilities per linked repo                 |
-| `GET: /api/sonar/repo?repository=`                                                 | Main branch quality metrics for one repository                        |
-| `GET: /api/sonar/pr?repository=&prNumber=`                                         | New code quality metrics for one pull request                         |
-| `GET/PUT: /api/projects/{slug}/jira/workflow`                                      | The project's Jira workflow stages (Project or Dashboard Admin)       |
-| `GET: /api/projects/{slug}/jira/statuses`                                          | Jira statuses seen, detected and live (Project or Dashboard Admin)    |
-| `PUT: /api/projects/{slug}/sprint-calendar`                                        | Set the sprint length and a sprint start (Project or Dashboard Admin) |
+| Endpoint                                                                           | Description                                                        |
+| :--------------------------------------------------------------------------------- | :----------------------------------------------------------------- |
+| `GET: /health`                                                                     | Platform health check (no token)                                   |
+| `POST: /api/auth/authorize`                                                        | Sign-in check: the caller's roles, or `403` if none                |
+| `GET: /api/auth/me`                                                                | The caller's roles and project access                              |
+| `GET/POST/PATCH/DELETE: /api/role-mappings`                                        | Manage group-to-role mappings (Dashboard Admin only)               |
+| `GET: /api/ingest/repositories/{fullName}`                                         | Is a repository mapped? (`x-ingest-token`)                         |
+| `POST: /api/payloads`                                                              | Ingest one analytics payload (requires `x-ingest-token`)           |
+| `POST: /api/survival`                                                              | Ingest one AI code survival record (`x-ingest-token`)              |
+| `GET: /api/projects/{slug}/churn`                                                  | 21-day AI code churn from survival records                         |
+| `PUT: /api/repositories/{fullName}`                                                | Map a repository to a project (its SonarCloud key is kept)         |
+| `PUT: /api/repositories/{fullName}/sonar-key`                                      | Set, change or clear one repository's SonarCloud project key       |
+| `GET: /api/payloads`                                                               | Latest payload per repository and pull request                     |
+| `GET: /api/payloads/{repository}/{prNumber}`                                       | Full payload history for one pull request, newest first            |
+| `GET: /api/sonar/overview`                                                         | Gate, coverage, bugs, vulnerabilities per linked repo              |
+| `GET: /api/sonar/repo?repository=`                                                 | Main branch quality metrics for one repository                     |
+| `GET: /api/sonar/pr?repository=&prNumber=`                                         | New code quality metrics for one pull request                      |
+| `GET/PUT: /api/projects/{slug}/jira/workflow`                                      | The project's Jira workflow stages (Project or Dashboard Admin)    |
+| `GET: /api/projects/{slug}/jira/statuses`                                          | Jira statuses seen, detected and live (Project or Dashboard Admin) |
 | Every route except `GET /health`, `POST /api/payloads`, `POST /api/survival` and   |
 | `GET /api/ingest/repositories/{fullName}` requires a valid Entra access token. See |
 | [Authentication](#authentication).                                                 |
