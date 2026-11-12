@@ -294,6 +294,30 @@ describe('#projects service', () => {
     })
   })
 
+  describe('#setSprintCalendar', () => {
+    const calendar = {
+      cadenceDays: 10,
+      anchorDate: new Date('2026-11-02T00:00:00.000Z')
+    }
+
+    test('Should replace the sprint calendar of an active project', async () => {
+      await service.createProject(db, { slug: 'CAL', name: 'Calendar' })
+
+      const updated = await service.setSprintCalendar(db, 'CAL', calendar)
+
+      expect(updated.sprintCalendar).toEqual(calendar)
+    })
+
+    test('Should leave an archived project alone', async () => {
+      await service.createProject(db, { slug: 'OLD', name: 'Old' })
+      await service.deleteProject(db, 'OLD')
+
+      await expect(
+        service.setSprintCalendar(db, 'OLD', calendar)
+      ).resolves.toBeNull()
+    })
+  })
+
   describe('#deleteProject', () => {
     test('Should soft-delete project setting archivedAt', async () => {
       await service.createProject(db, {

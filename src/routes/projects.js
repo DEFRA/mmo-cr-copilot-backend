@@ -21,8 +21,10 @@ import {
   projectPayloadsQuerySchema,
   projectSlugParamSchema,
   projectSprintsQuerySchema,
-  projectUpdateSchema
+  projectUpdateSchema,
+  sprintCalendarSchema
 } from '#/schemas/project.js'
+import { AUDIT_ACTIONS, AUDIT_ENTITIES } from '#/schemas/audit-log.js'
 import {
   PROJECT_SLUG_CONFLICT_MESSAGE,
   createProject,
@@ -31,6 +33,7 @@ import {
   findProjectPayloads,
   resolveProjectSprints,
   listProjects,
+  setSprintCalendar,
   updateProject
 } from '#/services/projects.js'
 import { listProjectJiraIssues } from '#/services/jira-scope.js'
@@ -316,6 +319,50 @@ export const projectsRoutes = [
         }
       )
       return h.response({ sprints })
+    }
+  },
+  {
+    method: 'PUT',
+    path: '/api/projects/{slug}/sprint-calendar',
+    options: {
+      validate: {
+        params: projectSlugParamSchema,
+        payload: sprintCalendarSchema
+      }
+    },
+    handler: async (request, h) => {
+      const { project, user, role } = await loadProject(
+        request,
+        PROJECT_ROLES.admin
+      )
+      const updated = await setSprintCalendar(
+        request.db,
+        project.slug,
+        request.payload
+      )
+      if (!updated) {
+        throw Boom.notFound(`Project '${project.slug}' not found`)
+      }
+      const toAudit = (calendar) =>
+        calendar && {
+          cadenceDays: calendar.cadenceDays,
+          anchorDate: new Date(calendar.anchorDate).toISOString()
+        }
+      await recordAuditEvent(
+        request.db,
+        {
+          action: AUDIT_ACTIONS.sprintCalendarUpdated,
+          entity: AUDIT_ENTITIES.sprintCalendar,
+          entityId: project.slug,
+          projectSlug: project.slug,
+          summary: `Sprint period for ${project.slug} changed`,
+          before: toAudit(project.sprintCalendar) ?? null,
+          after: toAudit(updated.sprintCalendar),
+          actor: actorOf(user)
+        },
+        request.logger
+      )
+      return h.response(presentProject(updated, role))
     }
   },
   {

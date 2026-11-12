@@ -7,37 +7,18 @@ function toEntry(doc) {
   return {
     githubHandle: doc.githubHandle,
     persona: doc.persona,
-    updatedAt: doc.updatedAt.toISOString(),
-    scope: doc.projectSlug ? 'project' : 'default'
+    updatedAt: doc.updatedAt.toISOString()
   }
 }
 
-/**
- * A project's handle → persona mappings, alphabetical by handle. Rows saved
- * before mappings were scoped have no project; they act as read-only defaults
- * that a project's own row for the same handle overrides.
- */
+/** A project's own handle → persona mappings, alphabetical by handle; there are no cross-project defaults. */
 export async function listPersonaMappings(db, projectSlug) {
   const docs = await db
     .collection(PERSONA_MAPPINGS_COLLECTION)
-    .find({
-      $or: [
-        { projectSlug },
-        { projectSlug: null },
-        { projectSlug: { $exists: false } }
-      ]
-    })
+    .find({ projectSlug })
     .toArray()
 
-  const byHandle = new Map()
-  for (const doc of docs.filter((d) => !d.projectSlug)) {
-    byHandle.set(doc.githubHandle.toLowerCase(), doc)
-  }
-  for (const doc of docs.filter((d) => d.projectSlug)) {
-    byHandle.set(doc.githubHandle.toLowerCase(), doc)
-  }
-
-  return [...byHandle.values()]
+  return docs
     .sort((a, b) => a.githubHandle.localeCompare(b.githubHandle))
     .map(toEntry)
 }
@@ -71,8 +52,7 @@ export async function upsertPersonaMapping(
   return {
     githubHandle,
     persona,
-    updatedAt: updatedAt.toISOString(),
-    scope: 'project'
+    updatedAt: updatedAt.toISOString()
   }
 }
 
