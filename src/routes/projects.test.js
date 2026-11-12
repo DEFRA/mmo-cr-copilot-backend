@@ -797,6 +797,75 @@ describe('#projects routes', () => {
     })
   })
 
+  describe('PUT /api/projects/{slug}/sprint-calendar', () => {
+    const calendar = { cadenceDays: 7, anchorDate: '2026-11-02T00:00:00.000Z' }
+    const put = (headers, payload = calendar, slug = 'ALPH') =>
+      server.inject({
+        method: 'PUT',
+        url: `/api/projects/${slug}/sprint-calendar`,
+        headers,
+        payload
+      })
+
+    beforeEach(async () => {
+      await db.collection(PROJECTS_COLLECTION).insertOne({
+        slug: 'ALPH',
+        name: 'Alpha',
+        type: 'ai-adopted',
+        sprintCalendar: {
+          cadenceDays: 14,
+          anchorDate: new Date('2026-07-08T00:00:00.000Z')
+        },
+        archivedAt: null
+      })
+      await grantAccess(db, 'ALPH')
+    })
+
+    test('Should let a project admin set the sprint period and audit it', async () => {
+      const { statusCode, result } = await put(projectAdminHeaders)
+
+      expect(statusCode).toBe(200)
+      expect(result.sprintCalendar.cadenceDays).toBe(7)
+      const sprints = await server.inject({
+        url: '/api/projects/ALPH/sprints?count=1',
+        headers: projectAdminHeaders
+      })
+      const [live] = sprints.result.sprints
+      expect((new Date(live.end) - new Date(live.start)) / 86400000).toBe(7)
+      expect(new Date(live.start).getUTCDay()).toBe(1)
+      const audit = await db
+        .collection('audit-logs')
+        .findOne({ action: 'sprint-calendar.updated', entityId: 'ALPH' })
+      expect(audit.before).toEqual({
+        cadenceDays: 14,
+        anchorDate: '2026-07-08T00:00:00.000Z'
+      })
+      expect(audit.after).toEqual(calendar)
+    })
+
+    test('Should refuse a project user', async () => {
+      expect((await put(projectUserHeaders)).statusCode).toBe(403)
+    })
+
+    test('Should hide the project from an outsider', async () => {
+      expect((await put(outsiderHeaders)).statusCode).toBe(404)
+    })
+
+    test.each([
+      ['a length of 0', { ...calendar, cadenceDays: 0 }],
+      ['a length over 30', { ...calendar, cadenceDays: 31 }],
+      ['a fractional length', { ...calendar, cadenceDays: 1.5 }],
+      ['no start date', { cadenceDays: 7 }],
+      ['an invalid start date', { ...calendar, anchorDate: 'soon' }]
+    ])('Should reject %s', async (_, payload) => {
+      expect((await put(adminHeaders, payload)).statusCode).toBe(400)
+    })
+
+    test('Should return 404 for a missing project', async () => {
+      expect((await put(adminHeaders, calendar, 'NONE')).statusCode).toBe(404)
+    })
+  })
+
   describe('Role mapping authorization enforcement', () => {
     beforeEach(async () => {
       await server.inject({
