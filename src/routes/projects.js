@@ -19,10 +19,7 @@ import {
   projectSprintsQuerySchema,
   projectUpdateSchema,
   sprintCalendarSchema
-  projectUpdateSchema,
-  sprintCalendarSchema
 } from '#/schemas/project.js'
-import { AUDIT_ACTIONS, AUDIT_ENTITIES } from '#/schemas/audit-log.js'
 import { AUDIT_ACTIONS, AUDIT_ENTITIES } from '#/schemas/audit-log.js'
 import {
   PROJECT_SLUG_CONFLICT_MESSAGE,
@@ -32,7 +29,6 @@ import {
   findProjectPayloads,
   resolveProjectSprints,
   listProjects,
-  setSprintCalendar,
   setSprintCalendar,
   updateProject
 } from '#/services/projects.js'
