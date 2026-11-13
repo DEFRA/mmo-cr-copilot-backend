@@ -1,0 +1,30 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "package.json",
+  "added": 11,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 11,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "54,57,64,67-74"
+  },
+  "ai": [
+    [54, "a", "cb0e26ad", 0],
+    [57, "a", "af3b5d8d", 0],
+    [64, "a", "2988df87", 0],
+    [67, "a", "a005a581", 0],
+    [68, "a", "14f4a96f", 0],
+    [69, "a", "2372e65c", 0],
+    [70, "a", "86d354e6", 0],
+    [71, "a", "a005a581", 0],
+    [72, "a", "7e288b88", 0],
+    [73, "a", "b5f27f14", 0],
+    [74, "a", "9845a6a3", 0]
+  ]
+}
