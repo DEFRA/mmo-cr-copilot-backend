@@ -1,5 +1,10 @@
 import Boom from '@hapi/boom'
 
+import { DAY_MS } from '#/common/helpers/time.js'
+import {
+  DEFAULT_SPRINT_ANCHOR,
+  DEFAULT_SPRINT_LENGTH_DAYS
+} from '#/schemas/project.js'
 import { PAYLOADS_COLLECTION, toPayload } from '#/services/payloads.js'
 
 export const PROJECTS_COLLECTION = 'projects'
@@ -22,7 +27,9 @@ const toIso = (value) => (value instanceof Date ? value.toISOString() : value)
 
 // Strips Mongo storage internals and converts BSON dates to ISO strings.
 function toProject(doc) {
-  if (!doc) return null
+  if (!doc) {
+    return null
+  }
   const { _id, ...rest } = doc
   return {
     ...rest,
@@ -43,7 +50,9 @@ function toProject(doc) {
 
 // Formats a mapped repository record for API callers.
 function toRepository(doc) {
-  if (!doc) return null
+  if (!doc) {
+    return null
+  }
   const { _id, ...rest } = doc
   return {
     ...rest,
@@ -94,31 +103,60 @@ export async function createProject(db, projectData) {
   return toProject(document)
 }
 
-// Updates an existing project and stamps updatedAt.
-export async function updateProject(db, slug, updateData) {
-  const now = new Date()
+// The $set for an update; per-field Jira paths so sync-owned fields such as jira.lastSyncedAt survive.
+function projectSetFor(updateData, now) {
   const { jira, ...rest } = updateData
-  const $set = {
-    ...rest,
-    updatedAt: now
-  }
-  // Per-field paths, so sync-owned fields such as jira.lastSyncedAt survive an edit.
+  const $set = { ...rest, updatedAt: now }
   for (const [key, value] of Object.entries(jira ?? {})) {
     $set[`jira.${key}`] = value
   }
   // An admin's field wins over detection; null hands the choice back to detection.
   if (jira && Object.hasOwn(jira, 'storyPointsField')) {
-    $set['jira.storyPointsFieldSource'] =
-      jira.storyPointsField === null ? null : 'admin'
-    if (jira.storyPointsField === null) {
+    const cleared = jira.storyPointsField === null
+    $set['jira.storyPointsFieldSource'] = cleared ? null : 'admin'
+    if (cleared) {
       $set['jira.storyPointsFieldDetectedAt'] = null
     }
   }
   if (updateData.adoptionStartDate !== undefined) {
-    $set.adoptionStartDate = updateData.adoptionStartDate
-      ? toDate(updateData.adoptionStartDate)
-      : null
+    $set.adoptionStartDate = toDate(updateData.adoptionStartDate) ?? null
   }
+  return $set
+}
+
+/**
+ * The filter and resets for a Jira key change, pinned to the key just read so
+ * the resets belong to the key they replace (ADR 0013); null when the project is gone.
+ */
+async function jiraKeyChange(collection, slug, jira) {
+  const current = await collection.findOne(
+    { slug },
+    { projection: { 'jira.projectKeys': 1 } }
+  )
+  if (!current) {
+    return null
+  }
+  const storedKeys = current.jira?.projectKeys ?? []
+  const filter = storedKeys.length
+    ? { slug, 'jira.projectKeys': storedKeys }
+    : { slug, 'jira.projectKeys.0': { $exists: false } }
+  if (storedKeys.length === 0 || sameKeys(storedKeys, jira.projectKeys)) {
+    return { filter, $set: {}, $unset: {} }
+  }
+  return {
+    filter,
+    $set: {
+      'jira.lastSyncedAt': null,
+      'jira.detectedStatuses': [],
+      'jira.detectedStatusesAt': null
+    },
+    $unset: jira.boardId === undefined ? { 'jira.boardId': '' } : {}
+  }
+}
+
+// Updates an existing project and stamps updatedAt.
+export async function updateProject(db, slug, updateData) {
+  const { jira } = updateData
   const collection = db.collection(PROJECTS_COLLECTION)
   if (jira) {
     // A dotted path cannot be created inside a null sub-document.
@@ -127,33 +165,22 @@ export async function updateProject(db, slug, updateData) {
       { $set: { jira: {} } }
     )
   }
-  const requestedKeys = jira?.projectKeys
-  const $unset = {}
-  let filter = { slug }
-  if (requestedKeys !== undefined) {
-    const current = await collection.findOne(
-      { slug },
-      { projection: { 'jira.projectKeys': 1 } }
-    )
-    if (!current) return null
-    const storedKeys = current.jira?.projectKeys ?? []
-    // Pinned to the key just read, so the resets below belong to the key they replace (ADR 0013).
-    filter = storedKeys.length
-      ? { slug, 'jira.projectKeys': storedKeys }
-      : { slug, 'jira.projectKeys.0': { $exists: false } }
-    if (storedKeys.length > 0 && !sameKeys(storedKeys, requestedKeys)) {
-      $set['jira.lastSyncedAt'] = null
-      $set['jira.detectedStatuses'] = []
-      $set['jira.detectedStatusesAt'] = null
-      if (jira.boardId === undefined) $unset['jira.boardId'] = ''
-    }
+  const keysChanging = jira?.projectKeys !== undefined
+  const change = keysChanging
+    ? await jiraKeyChange(collection, slug, jira)
+    : { filter: { slug }, $set: {}, $unset: {} }
+  if (!change) {
+    return null
   }
+  const $set = { ...projectSetFor(updateData, new Date()), ...change.$set }
   const result = await collection.findOneAndUpdate(
-    filter,
-    Object.keys($unset).length ? { $set, $unset } : { $set },
+    change.filter,
+    Object.keys(change.$unset).length
+      ? { $set, $unset: change.$unset }
+      : { $set },
     { returnDocument: 'after' }
   )
-  if (!result && requestedKeys !== undefined) {
+  if (!result && keysChanging) {
     throw Boom.conflict(JIRA_KEY_CONFLICT_MESSAGE)
   }
   return result ? toProject(result) : null
@@ -203,7 +230,9 @@ export async function findRepository(db, fullName) {
 
 /** A trimmed SonarCloud key, or null for '', whitespace and null; undefined passes through. */
 export function normaliseSonarKey(key) {
-  if (key === undefined) return undefined
+  if (key === undefined) {
+    return undefined
+  }
   const trimmed = typeof key === 'string' ? key.trim() : ''
   return trimmed || null
 }
@@ -212,11 +241,15 @@ const sonarKeyConflict = () => Boom.conflict(SONAR_KEY_CONFLICT_MESSAGE)
 
 // One SonarCloud project per repository; the unique index is the backstop for races.
 async function assertSonarKeyFree(db, fullName, sonarProjectKey) {
-  if (!sonarProjectKey) return
+  if (!sonarProjectKey) {
+    return
+  }
   const taken = await db
     .collection(REPOSITORIES_COLLECTION)
     .findOne({ sonarProjectKey, fullName: { $ne: fullName } })
-  if (taken) throw sonarKeyConflict()
+  if (taken) {
+    throw sonarKeyConflict()
+  }
 }
 
 async function writeRepository(db, fullName, update) {
@@ -225,7 +258,9 @@ async function writeRepository(db, fullName, update) {
       .collection(REPOSITORIES_COLLECTION)
       .findOneAndUpdate({ fullName }, update, { returnDocument: 'after' })
   } catch (error) {
-    if (error?.code === DUPLICATE_KEY_ERROR) throw sonarKeyConflict()
+    if (error?.code === DUPLICATE_KEY_ERROR) {
+      throw sonarKeyConflict()
+    }
     throw error
   }
 }
@@ -302,7 +337,7 @@ export async function findUnassignedRepositories(db) {
     }
   }
 
-  return [...unassigned].filter(Boolean).sort()
+  return [...unassigned].filter(Boolean).sort((a, b) => a.localeCompare(b))
 }
 
 // A PR is in a window when any commit lands in it; backfills share one calculatedAt.
@@ -318,8 +353,12 @@ function activityInWindow(range) {
 // Queries payloads scoped to projectSlug returning latest payload per PR.
 export async function findProjectPayloads(db, projectSlug, { from, to } = {}) {
   const range = {}
-  if (from) range.$gte = new Date(from)
-  if (to) range.$lt = new Date(to)
+  if (from) {
+    range.$gte = new Date(from)
+  }
+  if (to) {
+    range.$lt = new Date(to)
+  }
   const windowed = Object.keys(range).length > 0
 
   const pipeline = [
@@ -346,16 +385,11 @@ export async function findProjectPayloads(db, projectSlug, { from, to } = {}) {
 
 // Generates count sprint objects based on the project sprint calendar.
 export function getProjectSprints(project, count = 5, now = new Date()) {
-  const calendar = project?.sprintCalendar || {
-    cadenceDays: 14,
-    anchorDate: new Date('2026-07-08T00:00:00.000Z')
-  }
-  const cadenceDays = calendar.cadenceDays ?? 14
-  const anchorDate = calendar.anchorDate
-    ? new Date(calendar.anchorDate)
-    : new Date('2026-07-08T00:00:00.000Z')
+  const calendar = project?.sprintCalendar ?? {}
+  const cadenceDays = calendar.cadenceDays ?? DEFAULT_SPRINT_LENGTH_DAYS
+  const anchorDate = new Date(calendar.anchorDate ?? DEFAULT_SPRINT_ANCHOR)
 
-  const sprintLengthMs = cadenceDays * 24 * 60 * 60 * 1000
+  const sprintLengthMs = cadenceDays * DAY_MS
   const current = Math.floor(
     (now.getTime() - anchorDate.getTime()) / sprintLengthMs
   )
@@ -402,7 +436,9 @@ export async function resolveProjectSprints(
         start: new Date(s.startDate),
         end: new Date(s.completeDate || s.endDate || now)
       }))
-    if (mapped.length === 0) return getProjectSprints(project, count, now)
+    if (mapped.length === 0) {
+      return getProjectSprints(project, count, now)
+    }
     return mapped.reverse().slice(0, count)
   } catch (err) {
     logger?.warn({ err }, 'Jira board sprints unavailable; using the cadence')

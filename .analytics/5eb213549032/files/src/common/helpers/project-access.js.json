@@ -1,0 +1,25 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/common/helpers/project-access.js",
+  "added": 12,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 5,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 7
+  },
+  "ranges": {
+    "ai-agent": "35,50,103-104,159",
+    "untracked": "33-34,48-49,102,157-158"
+  },
+  "ai": [
+    [35, "a", "9845a6a3", 0],
+    [50, "a", "9845a6a3", 0],
+    [103, "a", "5f5592e1", 0],
+    [104, "a", "9845a6a3", 0],
+    [159, "a", "9845a6a3", 0]
+  ]
+}

@@ -110,8 +110,11 @@ describe('#jira-workflow service', () => {
       ['deleted', null]
     ])('Should answer 404 when the project was %s', async (_, update) => {
       const projects = db.collection('projects')
-      if (update) await projects.updateOne({ slug: SLUG }, update)
-      else await projects.deleteOne({ slug: SLUG })
+      if (update) {
+        await projects.updateOne({ slug: SLUG }, update)
+      } else {
+        await projects.deleteOne({ slug: SLUG })
+      }
 
       await expect(
         saveProjectWorkflow(db, SLUG, { version: 0, stages }, actor)

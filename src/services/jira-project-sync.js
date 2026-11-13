@@ -1,49 +1,27 @@
+import { MINUTE_MS } from '#/common/helpers/time.js'
 import { JIRA_ISSUES_COLLECTION } from '#/services/jira.js'
+import { captureSprintScope } from '#/services/jira-lazy-fetch.js'
 import { detectProjectStatuses } from '#/services/jira-workflow.js'
 import { PROJECTS_COLLECTION } from '#/services/projects.js'
 
-const SPRINT_SCOPE_COLLECTION = 'jira-sprint-scope'
-const DUPLICATE_KEY_ERROR = 11000
+const OVERLAP_MINUTES = 15
 // Jira compares `updated` at minute precision in the user's time zone, so each run overlaps the last.
-const OVERLAP_MS = 15 * 60 * 1000
+const OVERLAP_MS = OVERLAP_MINUTES * MINUTE_MS
 
-/**
- * Records the issues in each active sprint the first time it is seen, so
- * sprint predictability compares delivery against the scope committed at start.
- */
-export async function captureSprintScope({ db, client, project }) {
-  const sprints = await client.getBoardSprints(project.jira.boardId)
-  const scope = db.collection(SPRINT_SCOPE_COLLECTION)
-  for (const sprint of sprints) {
-    if (sprint.state !== 'active' || !Number.isInteger(sprint.id)) continue
-    if (await scope.findOne({ sprintId: sprint.id })) continue
+export { captureSprintScope }
 
-    const issueKeys = []
-    let nextPageToken
-    do {
-      const page = await client.searchIssues(`sprint = ${sprint.id}`, {
-        fields: ['key'],
-        expand: '',
-        nextPageToken
-      })
-      issueKeys.push(...(page.issues ?? []).map((issue) => issue.key))
-      nextPageToken = page.isLast === false ? page.nextPageToken : undefined
-    } while (nextPageToken)
-
-    try {
-      await scope.insertOne({
-        sprintId: sprint.id,
-        projectSlug: project.slug,
-        name: sprint.name,
-        startDate: sprint.startDate ? new Date(sprint.startDate) : null,
-        endDate: sprint.endDate ? new Date(sprint.endDate) : null,
-        issueKeys,
-        capturedAt: new Date()
-      })
-    } catch (err) {
-      if (err?.code !== DUPLICATE_KEY_ERROR) throw err
-    }
+// The incremental sync start, or null for a full sync.
+async function syncStart(db, project, full) {
+  const lastSyncedAt = project.jira?.lastSyncedAt
+  if (full || !lastSyncedAt) {
+    return null
   }
+  const hasIssues = await db
+    .collection(JIRA_ISSUES_COLLECTION)
+    .findOne({ projectSlug: project.slug }, { projection: { _id: 1 } })
+  return hasIssues
+    ? new Date(new Date(lastSyncedAt).getTime() - OVERLAP_MS)
+    : null
 }
 
 /**
@@ -60,27 +38,21 @@ export async function syncOneProject({
 }) {
   const startedAt = new Date()
   const jira = project.jira ?? {}
-  const hasIssues =
-    !full &&
-    jira.lastSyncedAt &&
-    (await db
-      .collection(JIRA_ISSUES_COLLECTION)
-      .findOne({ projectSlug: project.slug }, { projection: { _id: 1 } }))
-  const lastSyncedAt = hasIssues ? jira.lastSyncedAt : null
+  const updatedSince = await syncStart(db, project, full)
   const result = await client.syncProjectIssues(
     db,
     project.slug,
     jira.projectKeys,
     jira.storyPointsField,
-    lastSyncedAt
-      ? {
-          updatedSince: new Date(new Date(lastSyncedAt).getTime() - OVERLAP_MS)
-        }
-      : {}
+    updatedSince ? { updatedSince } : {}
   )
-  if (result?.configured === false || !jira.projectKeys?.length) return result
+  if (result?.configured === false || !jira.projectKeys?.length) {
+    return result
+  }
 
-  if (jira.boardId) await captureSprintScope({ db, client, project })
+  if (jira.boardId) {
+    await captureSprintScope({ db, client, project })
+  }
   // A failed or empty status fetch keeps the previously detected statuses.
   const detected = await detectProjectStatuses(client, project, logger)
   if (detected?.length === 0) {

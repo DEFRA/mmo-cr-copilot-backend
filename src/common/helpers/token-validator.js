@@ -127,41 +127,106 @@ function parseDevToken(token) {
   return toClaims(payload)
 }
 
+const CLAIM_ERRORS = {
+  nbf: [TOKEN_ERRORS.notYetValid, 'Token not yet valid'],
+  iss: [TOKEN_ERRORS.issuer, 'Unexpected issuer'],
+  aud: [TOKEN_ERRORS.audience, 'Unexpected audience']
+}
+
+const SIGNATURE_ERRORS = [
+  errors.JWSSignatureVerificationFailed,
+  errors.JWSInvalid,
+  errors.JOSEAlgNotAllowed,
+  errors.JWTInvalid
+]
+
+const SIGNING_KEY_ERRORS = [
+  errors.JWKSTimeout,
+  errors.JWKSNoMatchingKey,
+  errors.JWKSMultipleMatchingKeys
+]
+
+const isOneOf = (error, types) => types.some((type) => error instanceof type)
+
+function mapClaimError(error) {
+  const [code, message] = CLAIM_ERRORS[error.claim] ?? [
+    MISSING_CLAIM_ERRORS[error.claim] ?? TOKEN_ERRORS.subject,
+    `Claim ${error.claim} is invalid`
+  ]
+  return new TokenError(code, message)
+}
+
 function mapJoseError(error) {
   if (error instanceof errors.JWTExpired) {
     return new TokenError(TOKEN_ERRORS.expired, 'Token expired')
   }
   if (error instanceof errors.JWTClaimValidationFailed) {
-    if (error.claim === 'nbf') {
-      return new TokenError(TOKEN_ERRORS.notYetValid, 'Token not yet valid')
-    }
-    if (error.claim === 'iss') {
-      return new TokenError(TOKEN_ERRORS.issuer, 'Unexpected issuer')
-    }
-    if (error.claim === 'aud') {
-      return new TokenError(TOKEN_ERRORS.audience, 'Unexpected audience')
-    }
-    return new TokenError(
-      MISSING_CLAIM_ERRORS[error.claim] ?? TOKEN_ERRORS.subject,
-      `Claim ${error.claim} is invalid`
-    )
+    return mapClaimError(error)
   }
-  if (
-    error instanceof errors.JWSSignatureVerificationFailed ||
-    error instanceof errors.JWSInvalid ||
-    error instanceof errors.JOSEAlgNotAllowed ||
-    error instanceof errors.JWTInvalid
-  ) {
+  if (isOneOf(error, SIGNATURE_ERRORS)) {
     return new TokenError(TOKEN_ERRORS.signature, 'Invalid token signature')
   }
-  if (
-    error instanceof errors.JWKSTimeout ||
-    error instanceof errors.JWKSNoMatchingKey ||
-    error instanceof errors.JWKSMultipleMatchingKeys
-  ) {
+  if (isOneOf(error, SIGNING_KEY_ERRORS)) {
     return new TokenError(TOKEN_ERRORS.jwks, 'Signing key unavailable')
   }
   return new TokenError(TOKEN_ERRORS.malformed, 'Token could not be verified')
+}
+
+const isDevToken = (token) =>
+  token === DEV_TOKEN_PREFIX || token.startsWith(`${DEV_TOKEN_PREFIX}.`)
+
+async function verifySignature(token, settings, options) {
+  const { tenantId, clientId } = settings
+  const jwks =
+    options.jwks ??
+    createJwksResolver({
+      tenantId,
+      timeoutMs: settings.jwksTimeoutMs,
+      cacheMaxAgeMs: settings.jwksCacheMaxAgeMs,
+      cooldownMs: settings.jwksCooldownMs
+    })
+  try {
+    const { payload } = await jwtVerify(token, jwks, {
+      algorithms: ['RS256'],
+      issuer: `https://login.microsoftonline.com/${tenantId}/v2.0`,
+      audience: clientId,
+      clockTolerance: settings.clockToleranceSeconds,
+      requiredClaims: REQUIRED_CLAIMS,
+      ...(options.now ? { currentDate: options.now } : {})
+    })
+    return payload
+  } catch (error) {
+    throw mapJoseError(error)
+  }
+}
+
+const ALLOWED_CLIENT_AUTH = new Set(['1', '2'])
+
+function isAllowedClient(payload, settings) {
+  return (
+    settings.allowedClientIds.includes(payload.azp) &&
+    ALLOWED_CLIENT_AUTH.has(String(payload.azpacr))
+  )
+}
+
+function assertTokenClaims(payload, settings) {
+  if (payload.ver !== '2.0') {
+    throw new TokenError(TOKEN_ERRORS.version, 'Unexpected token version')
+  }
+  if (payload.tid !== settings.tenantId) {
+    throw new TokenError(TOKEN_ERRORS.tenant, 'Unexpected tenant')
+  }
+  const scopes = typeof payload.scp === 'string' ? payload.scp.split(' ') : []
+  if (!scopes.includes(settings.scope)) {
+    throw new TokenError(TOKEN_ERRORS.scope, 'Required scope missing')
+  }
+  if (!isAllowedClient(payload, settings)) {
+    throw new TokenError(TOKEN_ERRORS.client, 'Client is not allowed')
+  }
+  if (typeof payload.oid !== 'string' || !GUID_PATTERN.test(payload.oid)) {
+    throw new TokenError(TOKEN_ERRORS.subject, 'Invalid oid')
+  }
+  assertNoOverage(payload)
 }
 
 /**
@@ -177,61 +242,18 @@ export async function verifyAccessToken(token, options = {}) {
 
   const settings = options.settings ?? readAuthSettings()
 
-  if (token === DEV_TOKEN_PREFIX || token.startsWith(`${DEV_TOKEN_PREFIX}.`)) {
+  if (isDevToken(token)) {
     if (!settings.devBypass) {
       throw new TokenError(TOKEN_ERRORS.malformed, 'Dev tokens are disabled')
     }
     return parseDevToken(token)
   }
 
-  const { tenantId, clientId } = settings
-  if (!tenantId || !clientId) {
+  if (!settings.tenantId || !settings.clientId) {
     throw new TokenError(TOKEN_ERRORS.jwks, 'Entra is not configured')
   }
 
-  const jwks =
-    options.jwks ??
-    createJwksResolver({
-      tenantId,
-      timeoutMs: settings.jwksTimeoutMs,
-      cacheMaxAgeMs: settings.jwksCacheMaxAgeMs,
-      cooldownMs: settings.jwksCooldownMs
-    })
-
-  let payload
-  try {
-    ;({ payload } = await jwtVerify(token, jwks, {
-      algorithms: ['RS256'],
-      issuer: `https://login.microsoftonline.com/${tenantId}/v2.0`,
-      audience: clientId,
-      clockTolerance: settings.clockToleranceSeconds,
-      requiredClaims: REQUIRED_CLAIMS,
-      ...(options.now ? { currentDate: options.now } : {})
-    }))
-  } catch (error) {
-    throw mapJoseError(error)
-  }
-
-  if (payload.ver !== '2.0') {
-    throw new TokenError(TOKEN_ERRORS.version, 'Unexpected token version')
-  }
-  if (payload.tid !== tenantId) {
-    throw new TokenError(TOKEN_ERRORS.tenant, 'Unexpected tenant')
-  }
-  const scopes = typeof payload.scp === 'string' ? payload.scp.split(' ') : []
-  if (!scopes.includes(settings.scope)) {
-    throw new TokenError(TOKEN_ERRORS.scope, 'Required scope missing')
-  }
-  if (
-    !settings.allowedClientIds.includes(payload.azp) ||
-    !['1', '2'].includes(String(payload.azpacr))
-  ) {
-    throw new TokenError(TOKEN_ERRORS.client, 'Client is not allowed')
-  }
-  if (typeof payload.oid !== 'string' || !GUID_PATTERN.test(payload.oid)) {
-    throw new TokenError(TOKEN_ERRORS.subject, 'Invalid oid')
-  }
-  assertNoOverage(payload)
-
+  const payload = await verifySignature(token, settings, options)
+  assertTokenClaims(payload, settings)
   return toClaims(payload)
 }

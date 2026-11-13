@@ -1,0 +1,24 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "test-helpers/entra-tokens.js",
+  "added": 12,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 4,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 8
+  },
+  "ranges": {
+    "ai-agent": "71,74,77,80",
+    "untracked": "69-70,72-73,75-76,78-79"
+  },
+  "ai": [
+    [71, "a", "9845a6a3", 0],
+    [74, "a", "9845a6a3", 0],
+    [77, "a", "9845a6a3", 0],
+    [80, "a", "9845a6a3", 0]
+  ]
+}

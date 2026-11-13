@@ -1,5 +1,6 @@
 import { config } from '#/config.js'
 import { TIMED_OUT, withinBudget } from '#/common/helpers/concurrency.js'
+import { DAY_MS, HOUR_MS, MINUTE_MS } from '#/common/helpers/time.js'
 import { JIRA_ISSUES_COLLECTION, JiraAccessError } from '#/services/jira.js'
 import { detectProjectStatuses } from '#/services/jira-workflow.js'
 import { PROJECTS_COLLECTION, findProject } from '#/services/projects.js'
@@ -15,8 +16,8 @@ import { attachIssueFlow } from '#/services/workflow-stages.js'
 export const JIRA_UNRESOLVED_KEYS_COLLECTION = 'jira-unresolved-keys'
 const SPRINT_SCOPE_COLLECTION = 'jira-sprint-scope'
 const DUPLICATE_KEY_ERROR = 11000
-const DETECT_EVERY_MS = 24 * 60 * 60 * 1000
-const SCOPE_CHECK_EVERY_MS = 60 * 60 * 1000
+const DETECT_EVERY_MS = DAY_MS
+const SCOPE_CHECK_EVERY_MS = HOUR_MS
 const SETTLE_MS = 5000
 
 const inflightWindows = new Map()
@@ -48,8 +49,7 @@ export function planIssueRefresh({
   const needsRefetch = (key) => {
     const doc = docsByKey.get(key)
     return (
-      !doc ||
-      !doc.fetchedAt ||
+      !doc?.fetchedAt ||
       (doc.storyPointsField ?? null) !== (storyPointsField ?? null)
     )
   }
@@ -63,19 +63,15 @@ export function planIssueRefresh({
     otherKeys.filter(staleOpen),
     otherKeys.filter(needsRefetch)
   ]
-  const plan = []
-  const seen = new Set()
-  for (const key of tiers.flat()) {
-    if (seen.has(key) || unresolved.has(key)) continue
-    seen.add(key)
-    plan.push(key)
-    if (plan.length >= maxKeys) break
-  }
-  return plan
+  return [...new Set(tiers.flat())]
+    .filter((key) => !unresolved.has(key))
+    .slice(0, maxKeys)
 }
 
 async function recordUnresolved(db, projectSlug, keys, now) {
-  if (keys.length === 0) return
+  if (keys.length === 0) {
+    return
+  }
   await db.collection(JIRA_UNRESOLVED_KEYS_COLLECTION).bulkWrite(
     keys.map((key) => ({
       updateOne: {
@@ -90,7 +86,9 @@ async function recordUnresolved(db, projectSlug, keys, now) {
 
 async function fetchClaimed({ db, client, project, field, keys, now }) {
   const claimed = keys.filter((key) => !inflightKeys.has(key))
-  if (claimed.length === 0) return []
+  if (claimed.length === 0) {
+    return []
+  }
   claimed.forEach((key) => inflightKeys.add(key))
   try {
     const { fetched, unresolved } = await client.fetchIssuesByKey(db, {
@@ -116,7 +114,9 @@ async function refreshKeys({
   now
 }) {
   const all = [...windowKeys, ...otherKeys]
-  if (all.length === 0) return []
+  if (all.length === 0) {
+    return []
+  }
   const [docs, unresolved] = await Promise.all([
     db
       .collection(JIRA_ISSUES_COLLECTION)
@@ -138,14 +138,16 @@ async function refreshKeys({
     unresolved: new Set(unresolved.map((doc) => doc.key)),
     storyPointsField: field,
     now,
-    freshMs: config.get('jira.freshnessMinutes') * 60 * 1000,
+    freshMs: config.get('jira.freshnessMinutes') * MINUTE_MS,
     maxKeys: config.get('jira.lazyFetchMaxKeys')
   })
   return fetchClaimed({ db, client, project, field, keys: plan, now })
 }
 
 async function refreshParents({ db, client, project, field, keys, now }) {
-  if (keys.length === 0) return []
+  if (keys.length === 0) {
+    return []
+  }
   const children = await db
     .collection(JIRA_ISSUES_COLLECTION)
     .find(
@@ -182,9 +184,13 @@ export async function resolveStoryPointsField({
 }) {
   const jira = project.jira ?? {}
   const current = jira.storyPointsField ?? null
-  if (jira.storyPointsFieldSource === 'admin') return current
+  if (jira.storyPointsFieldSource === 'admin') {
+    return current
+  }
   const detectedAt = time(jira.storyPointsFieldDetectedAt)
-  if (detectedAt && now.getTime() - detectedAt < DETECT_EVERY_MS) return current
+  if (detectedAt && now.getTime() - detectedAt < DETECT_EVERY_MS) {
+    return current
+  }
   try {
     const detected = await client.getStoryPointsFieldId()
     await db.collection(PROJECTS_COLLECTION).updateOne(
@@ -212,6 +218,47 @@ export async function resolveStoryPointsField({
   }
 }
 
+const toDate = (value) => (value ? new Date(value) : null)
+
+// Every issue key in a sprint, following Jira's page tokens.
+async function sprintIssueKeys(client, sprintId, nextPageToken) {
+  const page = await client.searchIssues(`sprint = ${sprintId}`, {
+    fields: ['key'],
+    expand: '',
+    nextPageToken
+  })
+  const keys = (page.issues ?? []).map((issue) => issue.key)
+  if (page.isLast !== false || !page.nextPageToken) {
+    return keys
+  }
+  return [
+    ...keys,
+    ...(await sprintIssueKeys(client, sprintId, page.nextPageToken))
+  ]
+}
+
+async function recordSprintScope({ scope, client, project, sprint }) {
+  if (await scope.findOne({ sprintId: sprint.id })) {
+    return
+  }
+  const issueKeys = await sprintIssueKeys(client, sprint.id)
+  try {
+    await scope.insertOne({
+      sprintId: sprint.id,
+      projectSlug: project.slug,
+      name: sprint.name,
+      startDate: toDate(sprint.startDate),
+      endDate: toDate(sprint.endDate),
+      issueKeys,
+      capturedAt: new Date()
+    })
+  } catch (err) {
+    if (err?.code !== DUPLICATE_KEY_ERROR) {
+      throw err
+    }
+  }
+}
+
 /**
  * Records the issues in each active sprint the first time it is seen, so
  * sprint predictability compares delivery against the scope committed at start.
@@ -219,56 +266,41 @@ export async function resolveStoryPointsField({
 export async function captureSprintScope({ db, client, project }) {
   const sprints = await client.getBoardSprints(project.jira.boardId)
   const scope = db.collection(SPRINT_SCOPE_COLLECTION)
-  for (const sprint of sprints) {
-    if (sprint.state !== 'active' || !Number.isInteger(sprint.id)) continue
-    if (await scope.findOne({ sprintId: sprint.id })) continue
+  const active = sprints.filter(
+    (sprint) => sprint.state === 'active' && Number.isInteger(sprint.id)
+  )
+  await Promise.all(
+    active.map((sprint) =>
+      recordSprintScope({ scope, client, project, sprint })
+    )
+  )
+}
 
-    const issueKeys = []
-    let nextPageToken
-    do {
-      const page = await client.searchIssues(`sprint = ${sprint.id}`, {
-        fields: ['key'],
-        expand: '',
-        nextPageToken
-      })
-      issueKeys.push(...(page.issues ?? []).map((issue) => issue.key))
-      nextPageToken = page.isLast === false ? page.nextPageToken : undefined
-    } while (nextPageToken)
-
-    try {
-      await scope.insertOne({
-        sprintId: sprint.id,
-        projectSlug: project.slug,
-        name: sprint.name,
-        startDate: sprint.startDate ? new Date(sprint.startDate) : null,
-        endDate: sprint.endDate ? new Date(sprint.endDate) : null,
-        issueKeys,
-        capturedAt: new Date()
-      })
-    } catch (err) {
-      if (err?.code !== DUPLICATE_KEY_ERROR) throw err
-    }
+// A failed status fetch (null) keeps the previously detected statuses.
+async function storeDetectedStatuses({ db, client, project, logger, now }) {
+  const detected = await detectProjectStatuses(client, project, logger)
+  if (!detected) {
+    return
   }
+  if (detected.length === 0) {
+    logger.warn(`Jira returned no statuses for project ${project.slug}`)
+    return
+  }
+  await db.collection(PROJECTS_COLLECTION).updateOne(
+    { slug: project.slug },
+    {
+      $set: {
+        'jira.detectedStatuses': detected,
+        'jira.detectedStatusesAt': now
+      }
+    }
+  )
 }
 
 async function refreshProjectMetadata({ db, client, project, logger, now }) {
   const jira = project.jira ?? {}
   if (now.getTime() - time(jira.detectedStatusesAt) >= DETECT_EVERY_MS) {
-    // A failed or empty status fetch keeps the previously detected statuses.
-    const detected = await detectProjectStatuses(client, project, logger)
-    if (detected?.length) {
-      await db.collection(PROJECTS_COLLECTION).updateOne(
-        { slug: project.slug },
-        {
-          $set: {
-            'jira.detectedStatuses': detected,
-            'jira.detectedStatusesAt': now
-          }
-        }
-      )
-    } else if (detected) {
-      logger.warn(`Jira returned no statuses for project ${project.slug}`)
-    }
+    await storeDetectedStatuses({ db, client, project, logger, now })
   }
   if (
     jira.boardId &&
@@ -394,13 +426,17 @@ async function fetchUnknown({
   logger,
   now = new Date()
 }) {
-  if (!projectSlug || !client?.isConfigured() || !jiraKeys?.length) return
+  if (!projectSlug || !client?.isConfigured() || !jiraKeys?.length) {
+    return
+  }
   const project = await findProject(db, projectSlug)
   if (!project || project.archivedAt || projectJiraKeys(project).length === 0) {
     return
   }
   const keys = inProjectKeys(jiraKeys, project)
-  if (keys.length === 0) return
+  if (keys.length === 0) {
+    return
+  }
   const field = await resolveStoryPointsField({
     db,
     client,

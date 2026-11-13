@@ -64,8 +64,8 @@ export async function setManualPrLinks(
     await collection.find({ ...scope, source: 'manual' }).toArray()
   )
     .map((d) => d.jiraKey)
-    .sort()
-  const after = [...new Set(jiraKeys)].sort()
+    .sort((a, b) => a.localeCompare(b))
+  const after = [...new Set(jiraKeys)].sort((a, b) => a.localeCompare(b))
 
   await collection.deleteMany({
     ...scope,

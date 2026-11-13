@@ -1,0 +1,17 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "scripts/mock-data/jira-sonar.js",
+  "added": 3,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 0,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 3
+  },
+  "ranges": {
+    "untracked": "716-718"
+  }
+}

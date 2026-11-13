@@ -1,0 +1,27 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/common/helpers/url.js",
+  "added": 8,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 8,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "1-8"
+  },
+  "ai": [
+    [1, "a", "ba77ba6d", 0],
+    [2, "a", "82ad34f3", 0],
+    [3, "a", "9e50d005", 0],
+    [4, "a", "19da87e0", 0],
+    [5, "a", "db99c174", 0],
+    [6, "a", "9845a6a3", 0],
+    [7, "a", "9221cd12", 0],
+    [8, "a", "9845a6a3", 0]
+  ]
+}

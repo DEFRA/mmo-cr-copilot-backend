@@ -28,6 +28,7 @@ const percentage = Joi.number().min(0).max(100).required()
 // Upper bounds sized well above a realistic pull request so a malformed or
 // hostile producer cannot drive unbounded documents into Mongo.
 export const MAX_COMMITS = 1000
+const MAX_ATTRIBUTION_VERSION = 999
 export const MAX_CONTRIBUTORS = 200
 export const MAX_JIRA_KEYS = 50
 export const MAX_PR_TITLE_LENGTH = 256
@@ -148,7 +149,9 @@ const attributionSchema = Joi.object({
   source: Joi.string()
     .valid(...ATTRIBUTION_SOURCES)
     .required(),
-  version: extensionOnly(Joi.number().integer().min(1).max(999).required()),
+  version: extensionOnly(
+    Joi.number().integer().min(1).max(MAX_ATTRIBUTION_VERSION).required()
+  ),
   aiCompletionLines: attributionLines,
   aiChatLines: attributionLines,
   aiAgentLines: attributionLines,

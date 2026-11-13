@@ -1,0 +1,27 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "eslint.config.js",
+  "added": 8,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 8,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "10-17"
+  },
+  "ai": [
+    [10, "a", "2c944dad", 0],
+    [11, "a", "84e3fe70", 0],
+    [12, "a", "bd067d3c", 0],
+    [13, "a", "deacb736", 0],
+    [14, "a", "8afff046", 0],
+    [15, "a", "7149c6cf", 0],
+    [16, "a", "9845a6a3", 0],
+    [17, "a", "a005a581", 0]
+  ]
+}

@@ -49,7 +49,7 @@ export const payloads = [
 
       if (stored && request.server?.jira) {
         // Not awaited: an unreachable Jira must never slow or fail ingest.
-        fetchUnknownJiraIssues({
+        void fetchUnknownJiraIssues({
           db: request.db,
           client: request.server.jira,
           projectSlug,

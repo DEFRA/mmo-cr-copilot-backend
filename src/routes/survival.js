@@ -1,4 +1,5 @@
 import { config } from '#/config.js'
+import { HTTP_STATUS } from '#/common/constants/http-status.js'
 import { requireIngestToken } from '#/common/helpers/ingest-auth.js'
 import { survivalSchema } from '#/schemas/survival.js'
 import { SURVIVAL_STATUS, saveSurvival } from '#/services/survival.js'
@@ -32,7 +33,11 @@ export const survival = [
 
       return h
         .response({ status, repository, prNumber, windowDays })
-        .code(status === SURVIVAL_STATUS.created ? 201 : 200)
+        .code(
+          status === SURVIVAL_STATUS.created
+            ? HTTP_STATUS.created
+            : HTTP_STATUS.ok
+        )
     }
   }
 ]

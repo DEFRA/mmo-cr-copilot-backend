@@ -13,18 +13,27 @@ export const SYSTEM_ACTOR = { oid: 'system', name: 'System' }
 
 const DUPLICATE_KEY = 11000
 const ADMIN_LOCK = 'role-mappings-admin'
+const NOT_FOUND_MESSAGE = 'Role mapping not found'
+const DUPLICATE_MESSAGE = 'That group already has a mapping for this scope'
+const SLUG_REQUIRED_MESSAGE = 'projectSlug is required'
 
 const collection = (db) => db.collection(ROLE_MAPPINGS_COLLECTION)
 const toIso = (value) => (value instanceof Date ? value.toISOString() : value)
 
 function toObjectId(id) {
-  if (id instanceof ObjectId) return id
-  if (!ObjectId.isValid(id)) throw Boom.notFound('Role mapping not found')
+  if (id instanceof ObjectId) {
+    return id
+  }
+  if (!ObjectId.isValid(id)) {
+    throw Boom.notFound(NOT_FOUND_MESSAGE)
+  }
   return new ObjectId(id)
 }
 
 export function toRoleMapping(doc) {
-  if (!doc) return null
+  if (!doc) {
+    return null
+  }
   const { _id, createdAt, updatedAt, ...rest } = doc
   return {
     id: _id.toString(),
@@ -45,8 +54,10 @@ const auditView = (doc) =>
     projectSlug: doc.projectSlug ?? null
   }
 
-const summaryOf = (doc) =>
-  `${doc.groupName} as ${doc.role}${doc.projectSlug ? ` on ${doc.projectSlug}` : ''}`
+const summaryOf = (doc) => {
+  const scope = doc.projectSlug ? ` on ${doc.projectSlug}` : ''
+  return `${doc.groupName} as ${doc.role}${scope}`
+}
 
 const isDuplicateKey = (error) => error?.code === DUPLICATE_KEY
 
@@ -59,7 +70,9 @@ export async function listRoleMappings(db, { projectSlug } = {}) {
 }
 
 export async function findRoleMappingsForGroups(db, groupNames) {
-  if (!Array.isArray(groupNames) || groupNames.length === 0) return []
+  if (!Array.isArray(groupNames) || groupNames.length === 0) {
+    return []
+  }
   return collection(db)
     .find({ groupName: { $in: groupNames } })
     .toArray()
@@ -100,7 +113,9 @@ export async function createRoleMapping(db, input, actor, logger) {
   const role = input.role
   const projectSlug = role === ROLES.dashboardAdmin ? null : input.projectSlug
   if (role !== ROLES.dashboardAdmin) {
-    if (!projectSlug) throw Boom.badRequest('projectSlug is required')
+    if (!projectSlug) {
+      throw Boom.badRequest(SLUG_REQUIRED_MESSAGE)
+    }
     await assertActiveProject(db, projectSlug)
   }
 
@@ -119,7 +134,7 @@ export async function createRoleMapping(db, input, actor, logger) {
     doc._id = insertedId
   } catch (error) {
     if (isDuplicateKey(error)) {
-      throw Boom.conflict('That group already has a mapping for this scope')
+      throw Boom.conflict(DUPLICATE_MESSAGE)
     }
     throw error
   }
@@ -141,24 +156,36 @@ export async function createRoleMapping(db, input, actor, logger) {
   return toRoleMapping(doc)
 }
 
+async function findExisting(db, _id) {
+  const existing = await collection(db).findOne({ _id })
+  if (!existing) {
+    throw Boom.notFound(NOT_FOUND_MESSAGE)
+  }
+  return existing
+}
+
+// The project a patched mapping ends up on: none for a Dashboard Admin.
+async function patchedProjectSlug(db, role, patch, existing) {
+  if (role === ROLES.dashboardAdmin) {
+    return null
+  }
+  const projectSlug =
+    patch.projectSlug === undefined ? existing.projectSlug : patch.projectSlug
+  if (!projectSlug) {
+    throw Boom.badRequest(SLUG_REQUIRED_MESSAGE)
+  }
+  if (projectSlug !== existing.projectSlug) {
+    await assertActiveProject(db, projectSlug)
+  }
+  return projectSlug
+}
+
 export async function updateRoleMapping(db, id, patch, actor, logger) {
   const _id = toObjectId(id)
-  const existing = await collection(db).findOne({ _id })
-  if (!existing) throw Boom.notFound('Role mapping not found')
+  const existing = await findExisting(db, _id)
 
   const role = patch.role ?? existing.role
-  const projectSlug =
-    role === ROLES.dashboardAdmin
-      ? null
-      : patch.projectSlug !== undefined
-        ? patch.projectSlug
-        : existing.projectSlug
-  if (role !== ROLES.dashboardAdmin) {
-    if (!projectSlug) throw Boom.badRequest('projectSlug is required')
-    if (projectSlug !== existing.projectSlug) {
-      await assertActiveProject(db, projectSlug)
-    }
-  }
+  const projectSlug = await patchedProjectSlug(db, role, patch, existing)
 
   const $set = {
     role,
@@ -179,7 +206,7 @@ export async function updateRoleMapping(db, id, patch, actor, logger) {
       )
     } catch (error) {
       if (isDuplicateKey(error)) {
-        throw Boom.conflict('That group already has a mapping for this scope')
+        throw Boom.conflict(DUPLICATE_MESSAGE)
       }
       throw error
     }
@@ -193,7 +220,9 @@ export async function updateRoleMapping(db, id, patch, actor, logger) {
         return apply()
       })
     : await apply()
-  if (!updated) throw Boom.notFound('Role mapping not found')
+  if (!updated) {
+    throw Boom.notFound(NOT_FOUND_MESSAGE)
+  }
   invalidateRoleCache()
 
   await recordAuditEvent(
@@ -215,8 +244,7 @@ export async function updateRoleMapping(db, id, patch, actor, logger) {
 
 export async function deleteRoleMapping(db, id, actor, logger) {
   const _id = toObjectId(id)
-  const existing = await collection(db).findOne({ _id })
-  if (!existing) throw Boom.notFound('Role mapping not found')
+  const existing = await findExisting(db, _id)
 
   const remove = () => collection(db).deleteOne({ _id })
   if (existing.role === ROLES.dashboardAdmin) {
@@ -247,7 +275,9 @@ export async function deleteRoleMapping(db, id, actor, logger) {
 /** Removes every mapping that grants access to a project that is going away. */
 export async function deleteMappingsForProject(db, slug, actor, logger) {
   const mappings = await collection(db).find({ projectSlug: slug }).toArray()
-  if (mappings.length === 0) return 0
+  if (mappings.length === 0) {
+    return 0
+  }
   await collection(db).deleteMany({ projectSlug: slug })
   invalidateRoleCache()
   await recordAuditEvent(
@@ -272,8 +302,12 @@ export async function deleteMappingsForProject(db, slug, actor, logger) {
  */
 export async function ensureBootstrapAdmin(db, { groupName, logger } = {}) {
   const name = groupName?.trim()
-  if (!name) return false
-  if ((await countDashboardAdminMappings(db)) > 0) return false
+  if (!name) {
+    return false
+  }
+  if ((await countDashboardAdminMappings(db)) > 0) {
+    return false
+  }
 
   const now = new Date()
   const doc = {
@@ -289,7 +323,9 @@ export async function ensureBootstrapAdmin(db, { groupName, logger } = {}) {
     const { insertedId } = await collection(db).insertOne(doc)
     doc._id = insertedId
   } catch (error) {
-    if (isDuplicateKey(error)) return false
+    if (isDuplicateKey(error)) {
+      return false
+    }
     throw error
   }
   invalidateRoleCache()
@@ -319,11 +355,14 @@ export function invalidateRoleCache() {
   roleCache.clear()
 }
 
-const cacheKey = (groups) => JSON.stringify([...new Set(groups)].sort())
+const cacheKey = (groups) =>
+  JSON.stringify([...new Set(groups)].sort((a, b) => a.localeCompare(b)))
 
 function readCache(key) {
   const entry = roleCache.get(key)
-  if (!entry) return null
+  if (!entry) {
+    return null
+  }
   if (entry.expiresAt <= Date.now()) {
     roleCache.delete(key)
     return null
@@ -337,7 +376,9 @@ function readCache(key) {
 function writeCache(key, value) {
   const max = config.get('auth.roleCacheMaxEntries')
   const ttl = config.get('auth.roleCacheTtlMs')
-  if (max <= 0 || ttl <= 0) return
+  if (max <= 0 || ttl <= 0) {
+    return
+  }
   while (roleCache.size >= max) {
     roleCache.delete(roleCache.keys().next().value)
   }
@@ -376,7 +417,9 @@ async function computeUserRoles(db, groups) {
   return {
     roles: isAdmin ? [ROLES.dashboardAdmin] : [],
     projectRoles,
-    allowedProjects: isAdmin ? [...active].sort() : Object.keys(projectRoles)
+    allowedProjects: isAdmin
+      ? [...active].sort((a, b) => a.localeCompare(b))
+      : Object.keys(projectRoles)
   }
 }
 
@@ -389,7 +432,9 @@ export async function resolveUserRoles(db, tokenClaims) {
 
   const key = cacheKey(groups)
   const cached = readCache(key)
-  if (cached) return structuredClone(cached)
+  if (cached) {
+    return structuredClone(cached)
+  }
 
   const value = await computeUserRoles(db, groups)
   writeCache(key, value)

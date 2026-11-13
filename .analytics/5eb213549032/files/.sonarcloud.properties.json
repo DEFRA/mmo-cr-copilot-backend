@@ -1,0 +1,25 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": ".sonarcloud.properties",
+  "added": 6,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 6,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "1-6"
+  },
+  "ai": [
+    [1, "a", "814967c4", 0],
+    [2, "a", "039ee662", 0],
+    [3, "a", "28b9159c", 0],
+    [4, "a", "e4559d21", 0],
+    [5, "a", "d372673a", 0],
+    [6, "a", "62ea76e7", 0]
+  ]
+}

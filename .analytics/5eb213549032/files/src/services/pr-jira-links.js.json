@@ -1,0 +1,21 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/services/pr-jira-links.js",
+  "added": 2,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 2,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "67-68"
+  },
+  "ai": [
+    [67, "a", "c8f9b768", 0],
+    [68, "a", "c679e1c8", 0]
+  ]
+}

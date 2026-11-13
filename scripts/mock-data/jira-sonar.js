@@ -713,7 +713,9 @@ export function buildSonarSprintSnapshots(repositories) {
   const keys = new Map(repositories.map((r) => [r.fullName, r.sonarProjectKey]))
   return Object.entries(SONAR_HISTORY).flatMap(([repository, points]) =>
     points.flatMap((point, i) => {
-      if (!point) return []
+      if (!point) {
+        return []
+      }
       const [gate, coverage] = point
       const asOf = SONAR_CUTOFFS[i]
       const failing = gate === 'F'

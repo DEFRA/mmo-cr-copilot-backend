@@ -1,0 +1,27 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/plugins/entra-auth.js",
+  "added": 16,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 7,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 9
+  },
+  "ranges": {
+    "ai-agent": "34,58,76,80,112-113,143",
+    "untracked": "32-33,56-57,74-75,78-79,111"
+  },
+  "ai": [
+    [34, "a", "9845a6a3", 0],
+    [58, "a", "9845a6a3", 0],
+    [76, "a", "9845a6a3", 0],
+    [80, "a", "9845a6a3", 0],
+    [112, "a", "679b40a6", 0],
+    [113, "a", "9845a6a3", 0],
+    [143, "a", "5e1edc77", 0]
+  ]
+}

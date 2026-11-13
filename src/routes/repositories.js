@@ -61,8 +61,12 @@ async function auditMapping(request, user, action, repository, before, after) {
 }
 
 function sonarKeyAction(before, after) {
-  if (!before) return AUDIT_ACTIONS.repositorySonarKeySet
-  if (!after) return AUDIT_ACTIONS.repositorySonarKeyCleared
+  if (!before) {
+    return AUDIT_ACTIONS.repositorySonarKeySet
+  }
+  if (!after) {
+    return AUDIT_ACTIONS.repositorySonarKeyCleared
+  }
   return AUDIT_ACTIONS.repositorySonarKeyUpdated
 }
 
@@ -132,7 +136,9 @@ export const repositoriesRoutes = [
       const mayMap = projects.some((project) =>
         hasRole(resolveProjectRole(user, project), PROJECT_ROLES.admin)
       )
-      if (!mayMap) throw Boom.forbidden('Project admin role required')
+      if (!mayMap) {
+        throw Boom.forbidden('Project admin role required')
+      }
       const repositories = await findUnassignedRepositories(request.db)
       return h.response({ repositories })
     }

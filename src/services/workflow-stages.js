@@ -1,182 +1,22 @@
 // Jira workflow stages and per-issue flow (ADR 0011). Pure: no database or config.
 
-const DAY_MS = 24 * 60 * 60 * 1000
+import { DAY_MS } from '#/common/helpers/time.js'
+import {
+  MAX_STATUSES_TOTAL,
+  STAGE_IDS,
+  STATUS_BASELINE,
+  WORKFLOW_STAGES
+} from './workflow-baseline.js'
 
-export const WORKFLOW_STAGES = [
-  { id: 'todo', label: 'To Do', kind: 'todo', required: true },
-  { id: 'in-progress', label: 'In Progress', kind: 'active', required: false },
-  {
-    id: 'ready-for-review',
-    label: 'Ready for Review',
-    kind: 'waiting',
-    required: false
-  },
-  { id: 'in-review', label: 'In Review', kind: 'active', required: false },
-  {
-    id: 'ready-for-test',
-    label: 'Ready for Test',
-    kind: 'waiting',
-    required: false
-  },
-  { id: 'in-test', label: 'In Test', kind: 'active', required: false },
-  {
-    id: 'ready-for-release',
-    label: 'Ready for Release',
-    kind: 'waiting',
-    required: false
-  },
-  {
-    id: 'blocked',
-    label: 'Blocked or On Hold',
-    kind: 'waiting',
-    required: false
-  },
-  { id: 'done', label: 'Done', kind: 'done', required: true },
-  { id: 'cancelled', label: 'Cancelled', kind: 'excluded', required: false }
-]
-
-export const STAGE_IDS = WORKFLOW_STAGES.map((s) => s.id)
-export const MAX_STATUS_LENGTH = 60
-export const MAX_STATUSES_PER_STAGE = 40
-export const MAX_STATUSES_TOTAL = 150
-export const MAX_DETECTED_STATUSES = 500
-
-// Atlassian defaults plus common naming; see ADR 0011 for sources.
-export const STATUS_BASELINE = {
-  todo: [
-    'To Do',
-    'Backlog',
-    'Open',
-    'New',
-    'Selected for Development',
-    'Ready for Development',
-    'Ready for Dev',
-    'Ready',
-    'Refined',
-    'Refinement',
-    'Triage',
-    'Requested',
-    'Planned',
-    'Reopened'
-  ],
-  'in-progress': [
-    'In Progress',
-    'In Dev',
-    'In Development',
-    'Development',
-    'Dev',
-    'Doing',
-    'Started',
-    'Work in Progress',
-    'WIP',
-    'Implementing',
-    'Building',
-    'Coding',
-    'Fixing'
-  ],
-  'ready-for-review': [
-    'Ready for Review',
-    'Awaiting Review',
-    'Waiting for Review',
-    'Ready for Code Review',
-    'Review Ready'
-  ],
-  'in-review': [
-    'In Review',
-    'Under Review',
-    'Code Review',
-    'Peer Review',
-    'Review',
-    'PR Review',
-    'In Code Review',
-    'Second Review'
-  ],
-  'ready-for-test': [
-    'Ready for Test',
-    'Ready to Test',
-    'Ready for Testing',
-    'Ready for QA',
-    'QA Ready',
-    'Awaiting QA',
-    'Awaiting Test',
-    'Waiting for QA',
-    'Dev Complete',
-    'Dev Done'
-  ],
-  'in-test': [
-    'In Test',
-    'Testing',
-    'In Testing',
-    'In QA',
-    'QA',
-    'Under Test',
-    'Verification',
-    'Verifying',
-    'UAT',
-    'In UAT',
-    'User Acceptance Testing',
-    'Acceptance Testing',
-    'System Test',
-    'SIT'
-  ],
-  'ready-for-release': [
-    'Ready for Release',
-    'Awaiting Release',
-    'Ready to Release',
-    'Ready for Deployment',
-    'Ready to Deploy',
-    'Awaiting Deployment',
-    'Ready for Production',
-    'Ready for Prod',
-    'Staged'
-  ],
-  blocked: [
-    'Blocked',
-    'On Hold',
-    'Waiting',
-    'Pending',
-    'Paused',
-    'Parked',
-    'Impeded',
-    'Waiting for Info',
-    'Awaiting Info',
-    'Waiting for Customer',
-    'Waiting for Support',
-    'Waiting for Approval',
-    'Awaiting Approval',
-    'Awaiting CAB Approval'
-  ],
-  done: [
-    'Done',
-    'Completed',
-    'Complete',
-    'Closed',
-    'Resolved',
-    'Released',
-    'Deployed',
-    'Delivered',
-    'Live',
-    'In Production',
-    'Accepted',
-    'Approved',
-    'Finished',
-    'Shipped',
-    'Published'
-  ],
-  cancelled: [
-    'Cancelled',
-    'Canceled',
-    'Rejected',
-    "Won't Do",
-    "Won't Fix",
-    'Duplicate',
-    'Declined',
-    'Abandoned',
-    'Obsolete',
-    'Invalid',
-    'Cannot Reproduce'
-  ]
-}
+export {
+  MAX_DETECTED_STATUSES,
+  MAX_STATUS_LENGTH,
+  MAX_STATUSES_PER_STAGE,
+  MAX_STATUSES_TOTAL,
+  STAGE_IDS,
+  STATUS_BASELINE,
+  WORKFLOW_STAGES
+} from './workflow-baseline.js'
 
 const CATEGORY_KIND = { new: 'todo', indeterminate: 'active', done: 'done' }
 const CATEGORY_STAGE = {
@@ -198,15 +38,22 @@ export const tidyStatus = (name) =>
     .replace(/\s+/g, ' ')
 
 const round1 = (n) => Math.round(n * 10) / 10
-const toTime = (value) => (value ? new Date(value).getTime() : NaN)
+const toTime = (value) => (value ? new Date(value).getTime() : Number.NaN)
 const toDateOrNull = (time) => (Number.isFinite(time) ? new Date(time) : null)
 const days = (ms) => round1(Math.max(0, ms) / DAY_MS)
+// Whole days from `start` to `end`, or null when either is unknown.
+const spanDays = (end, start) =>
+  Number.isFinite(end) && Number.isFinite(start) ? days(end - start) : null
 
 /** First rule a stage list breaks, or null. Messages are shown to users. */
 export function workflowStagesError(stages) {
   const byId = new Map(stages.map((s) => [s.id, s.statuses ?? []]))
-  if (!(byId.get('todo')?.length > 0)) return 'To Do needs at least one status'
-  if (!(byId.get('done')?.length > 0)) return 'Done needs at least one status'
+  if ((byId.get('todo')?.length ?? 0) === 0) {
+    return 'To Do needs at least one status'
+  }
+  if ((byId.get('done')?.length ?? 0) === 0) {
+    return 'Done needs at least one status'
+  }
   const seen = new Set()
   let total = 0
   for (const stage of stages) {
@@ -236,19 +83,23 @@ function detectedStages(detected) {
   const baseline = buildStageIndex(baselineStages())
   const lists = Object.fromEntries(STAGE_IDS.map((id) => [id, []]))
   const seen = new Set()
-  for (const status of detected) {
+  const placed = detected.map((status) => {
     const name = tidyStatus(status?.name)
     const key = normaliseStatus(name)
-    if (!name || seen.has(key)) continue
-    const stageId =
-      baseline.get(key)?.stageId ?? CATEGORY_STAGE[status?.categoryKey]
-    if (!stageId) continue
-    seen.add(key)
-    lists[stageId].push(name)
+    return {
+      name,
+      key,
+      stageId: baseline.get(key)?.stageId ?? CATEGORY_STAGE[status?.categoryKey]
+    }
+  })
+  for (const { name, key, stageId } of placed) {
+    if (name && stageId && !seen.has(key)) {
+      seen.add(key)
+      lists[stageId].push(name)
+    }
   }
   // Metrics need a start and an end, so an empty required stage takes the baseline names.
-  for (const id of ['todo', 'done']) {
-    if (lists[id].length > 0) continue
+  for (const id of ['todo', 'done'].filter((stage) => !lists[stage].length)) {
     lists[id] = STATUS_BASELINE[id].filter((s) => !seen.has(normaliseStatus(s)))
   }
   return withMeta((id) => lists[id])
@@ -303,9 +154,13 @@ export function buildStageIndex(stages) {
  */
 export function buildWorkflowIndex(workflow) {
   const index = buildStageIndex(workflow.stages)
-  if (workflow.source !== 'detected') return index
+  if (workflow.source !== 'detected') {
+    return index
+  }
   for (const [key, value] of buildStageIndex(baselineStages())) {
-    if (!index.has(key)) index.set(key, { ...value, inferred: true })
+    if (!index.has(key)) {
+      index.set(key, { ...value, inferred: true })
+    }
   }
   return index
 }
@@ -334,7 +189,9 @@ export function classifyStatus(name, index, catalogue = new Map()) {
     }
   }
   const kind = CATEGORY_KIND[catalogue.get(key)]
-  if (kind) return { stageId: null, kind, inferred: true }
+  if (kind) {
+    return { stageId: null, kind, inferred: true }
+  }
   return { stageId: null, kind: 'unmapped', inferred: false }
 }
 
@@ -346,36 +203,34 @@ function currentStatus(issue, index, catalogue, categoryFallback = true) {
     : current
 }
 
+const unmappedCurrent = (issue, current) => {
+  const name = tidyStatus(issue.status?.name)
+  return current.kind === 'unmapped' && name ? [name] : []
+}
+
 function legacyFlow(issue, current) {
   const created = toTime(issue.created)
-  const started = STARTED_KINDS.has(current.kind) ? created : NaN
+  const started = STARTED_KINDS.has(current.kind) ? created : Number.NaN
   const done =
-    current.kind === 'done' ? toTime(issue.resolved || issue.updated) : NaN
-  const firstDone = Number.isFinite(toTime(issue.firstDoneAt))
-    ? toTime(issue.firstDoneAt)
-    : done
+    current.kind === 'done'
+      ? toTime(issue.resolved || issue.updated)
+      : Number.NaN
+  const firstDoneAt = toTime(issue.firstDoneAt)
   return {
     stageId: current.stageId,
     stageKind: current.kind,
     startedAt: toDateOrNull(started),
     doneAt: toDateOrNull(done),
-    firstDoneAt: toDateOrNull(firstDone),
-    cycleDays:
-      Number.isFinite(done) && Number.isFinite(started)
-        ? days(done - started)
-        : null,
-    leadDays:
-      Number.isFinite(done) && Number.isFinite(created)
-        ? days(done - created)
-        : null,
+    firstDoneAt: toDateOrNull(
+      Number.isFinite(firstDoneAt) ? firstDoneAt : done
+    ),
+    cycleDays: spanDays(done, started),
+    leadDays: spanDays(done, created),
     activeDays: null,
     waitingDays: null,
     flowEfficiency: null,
     reopenCount: issue.reopenCount ?? 0,
-    unmappedStatuses:
-      current.kind === 'unmapped' && tidyStatus(issue.status?.name)
-        ? [tidyStatus(issue.status?.name)]
-        : []
+    unmappedStatuses: unmappedCurrent(issue, current)
   }
 }
 
@@ -395,7 +250,9 @@ function buildSegments(issue, history, index, catalogue, current) {
   ]
   const last = segments.at(-1)
   const name = tidyStatus(issue.status?.name)
-  if (!name) return segments
+  if (!name) {
+    return segments
+  }
   if (normaliseStatus(last.name) === normaliseStatus(name)) {
     last.kind = current.kind
     return segments
@@ -415,15 +272,19 @@ const NOT_REOPENED_KINDS = new Set(['done', 'excluded'])
 
 function stageTransitions(segments) {
   const into = []
-  let excludedAt = NaN
+  let excludedAt = Number.NaN
   let reopens = 0
   segments.forEach((segment, i) => {
     const previous = segments[i - 1]?.kind
     if (segment.kind === 'excluded' && previous !== 'excluded') {
       excludedAt = segment.start
     }
-    if (i === 0) return
-    if (previous !== 'done' && segment.kind === 'done') into.push(segment.start)
+    if (i === 0) {
+      return
+    }
+    if (previous !== 'done' && segment.kind === 'done') {
+      into.push(segment.start)
+    }
     if (previous === 'done' && !NOT_REOPENED_KINDS.has(segment.kind)) {
       reopens += 1
     }
@@ -437,12 +298,63 @@ function timeInFlow(segments, started, end) {
   segments.forEach((segment, i) => {
     const until = i + 1 < segments.length ? segments[i + 1].start : end
     const span = Math.min(until, end) - Math.max(segment.start, started)
-    if (span <= 0) return
-    if (ACTIVE_KINDS.has(segment.kind)) active += span
-    else waiting += span
+    if (span <= 0) {
+      return
+    }
+    if (ACTIVE_KINDS.has(segment.kind)) {
+      active += span
+    } else {
+      waiting += span
+    }
   })
   return { active, waiting }
 }
+
+// Flow time stops at Done, at cancellation, or now for work still open.
+function flowEnd(current, done, excludedAt, now) {
+  if (Number.isFinite(done)) {
+    return done
+  }
+  if (current.kind === 'excluded' && Number.isFinite(excludedAt)) {
+    return excludedAt
+  }
+  return now.getTime()
+}
+
+const NO_FLOW_TIMES = {
+  activeDays: null,
+  waitingDays: null,
+  flowEfficiency: null
+}
+
+function flowTimesFor(segments, started, end) {
+  if (!Number.isFinite(started)) {
+    return NO_FLOW_TIMES
+  }
+  const { active, waiting } = timeInFlow(segments, started, end)
+  return {
+    activeDays: days(active),
+    waitingDays: days(waiting),
+    flowEfficiency:
+      active + waiting > 0 ? round1((active / (active + waiting)) * 100) : null
+  }
+}
+
+const unmappedSegments = (segments) =>
+  [
+    ...new Set(
+      segments
+        .filter((s) => s.kind === 'unmapped')
+        .map((s) => tidyStatus(s.name))
+        .filter(Boolean)
+    )
+  ].sort((a, b) => a.localeCompare(b))
+
+const sortedHistory = (issue) =>
+  (issue.statusHistory ?? [])
+    .map((change) => ({ ...change, at: toTime(change.at) }))
+    .filter((change) => Number.isFinite(change.at))
+    .sort((a, b) => a.at - b.at)
 
 /** Start, end and time in flow of one issue under a workflow index. Never mutates `issue`. */
 export function deriveIssueFlow(
@@ -453,64 +365,32 @@ export function deriveIssueFlow(
   { categoryFallback = true } = {}
 ) {
   const current = currentStatus(issue, index, catalogue, categoryFallback)
-  const history = (issue.statusHistory ?? [])
-    .map((change) => ({ ...change, at: toTime(change.at) }))
-    .filter((change) => Number.isFinite(change.at))
-    .sort((a, b) => a.at - b.at)
-  if (history.length === 0) return legacyFlow(issue, current)
+  const history = sortedHistory(issue)
+  if (history.length === 0) {
+    return legacyFlow(issue, current)
+  }
 
   const segments = buildSegments(issue, history, index, catalogue, current)
   const startSegment = segments.find((s) => STARTED_KINDS.has(s.kind))
-  const started = startSegment ? startSegment.start : NaN
+  const started = startSegment ? startSegment.start : Number.NaN
   const { into, excludedAt, reopens } = stageTransitions(segments)
   const done =
     current.kind === 'done'
       ? (into.at(-1) ?? toTime(issue.resolved || issue.updated))
-      : NaN
-  const firstDone = into.length > 0 ? into[0] : done
+      : Number.NaN
+  const end = flowEnd(current, done, excludedAt, now)
 
-  let flowTimes = { activeDays: null, waitingDays: null, flowEfficiency: null }
-  if (Number.isFinite(started)) {
-    let end = now.getTime()
-    if (Number.isFinite(done)) end = done
-    else if (current.kind === 'excluded' && Number.isFinite(excludedAt)) {
-      end = excludedAt
-    }
-    const { active, waiting } = timeInFlow(segments, started, end)
-    flowTimes = {
-      activeDays: days(active),
-      waitingDays: days(waiting),
-      flowEfficiency:
-        active + waiting > 0
-          ? round1((active / (active + waiting)) * 100)
-          : null
-    }
-  }
-
-  const unmapped = new Set(
-    segments
-      .filter((s) => s.kind === 'unmapped')
-      .map((s) => tidyStatus(s.name))
-      .filter(Boolean)
-  )
-  const created = toTime(issue.created)
   return {
     stageId: current.stageId,
     stageKind: current.kind,
     startedAt: toDateOrNull(started),
     doneAt: toDateOrNull(done),
-    firstDoneAt: toDateOrNull(firstDone),
-    cycleDays:
-      Number.isFinite(done) && Number.isFinite(started)
-        ? days(done - started)
-        : null,
-    leadDays:
-      Number.isFinite(done) && Number.isFinite(created)
-        ? days(done - created)
-        : null,
-    ...flowTimes,
+    firstDoneAt: toDateOrNull(into.length > 0 ? into[0] : done),
+    cycleDays: spanDays(done, started),
+    leadDays: spanDays(done, toTime(issue.created)),
+    ...flowTimesFor(segments, started, end),
     reopenCount: reopens,
-    unmappedStatuses: [...unmapped].sort()
+    unmappedStatuses: unmappedSegments(segments)
   }
 }
 

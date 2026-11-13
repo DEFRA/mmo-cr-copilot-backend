@@ -831,9 +831,7 @@ describe('#projects routes', () => {
         headers: projectAdminHeaders
       })
       const [live] = sprints.result.sprints
-      expect(
-        (new Date(live.end) - new Date(live.start)) / 86400000
-      ).toBe(7)
+      expect((new Date(live.end) - new Date(live.start)) / 86400000).toBe(7)
       expect(new Date(live.start).getUTCDay()).toBe(1)
       const audit = await db
         .collection('audit-logs')

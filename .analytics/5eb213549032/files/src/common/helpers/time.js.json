@@ -1,0 +1,24 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/common/helpers/time.js",
+  "added": 5,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 5,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "1-5"
+  },
+  "ai": [
+    [1, "a", "e660d165", 0],
+    [2, "a", "6e40aaac", 0],
+    [3, "a", "cb777c92", 0],
+    [4, "a", "ad475011", 0],
+    [5, "a", "ae299366", 0]
+  ]
+}

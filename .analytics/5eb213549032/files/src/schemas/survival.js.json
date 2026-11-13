@@ -1,0 +1,33 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/schemas/survival.js",
+  "added": 14,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 14,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "12-17,19-24,53,77"
+  },
+  "ai": [
+    [12, "a", "cfe07752", 0],
+    [13, "a", "24bb89ec", 0],
+    [14, "a", "36415a75", 0],
+    [15, "a", "e9f5dc18", 0],
+    [16, "a", "de00ad2e", 0],
+    [17, "a", "f0a57361", 0],
+    [19, "a", "9494a7a0", 0],
+    [20, "a", "4c6b3052", 0],
+    [21, "a", "aebfea3a", 0],
+    [22, "a", "814c202f", 0],
+    [23, "a", "b8b63a13", 0],
+    [24, "a", "2a1e1832", 0],
+    [53, "a", "2bb4bdbc", 0],
+    [77, "a", "80c513df", 0]
+  ]
+}

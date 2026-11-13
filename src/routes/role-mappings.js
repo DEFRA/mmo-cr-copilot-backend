@@ -1,3 +1,4 @@
+import { HTTP_STATUS } from '#/common/constants/http-status.js'
 import { requireDashboardAdmin } from '#/common/helpers/project-access.js'
 import {
   roleMappingCreateSchema,
@@ -44,7 +45,7 @@ export const roleMappingsRoutes = [
         actorOf(user),
         request.logger
       )
-      return h.response({ roleMapping }).code(201)
+      return h.response({ roleMapping }).code(HTTP_STATUS.created)
     }
   },
   {
@@ -81,7 +82,7 @@ export const roleMappingsRoutes = [
         actorOf(user),
         request.logger
       )
-      return h.response().code(204)
+      return h.response().code(HTTP_STATUS.noContent)
     }
   }
 ]

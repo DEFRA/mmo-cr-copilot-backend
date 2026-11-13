@@ -1,0 +1,21 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "sonar-project.properties",
+  "added": 2,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 2,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "17-18"
+  },
+  "ai": [
+    [17, "a", "f2d986ae", 0],
+    [18, "a", "62ea76e7", 0]
+  ]
+}

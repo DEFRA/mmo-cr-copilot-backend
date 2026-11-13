@@ -56,7 +56,9 @@ describe('#entra-auth strategy', () => {
 
   afterAll(async () => {
     await server.stop({ timeout: 1000 })
-    for (const [key, value] of Object.entries(previous)) config.set(key, value)
+    for (const [key, value] of Object.entries(previous)) {
+      config.set(key, value)
+    }
     config.set('ingest.token', '')
     delete process.env.INGEST_TOKEN
   })

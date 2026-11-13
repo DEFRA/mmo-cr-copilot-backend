@@ -2,6 +2,10 @@ import { MongoClient } from 'mongodb'
 import { LockManager } from 'mongo-locks'
 
 import { config } from '#/config.js'
+import {
+  DEFAULT_SPRINT_ANCHOR,
+  DEFAULT_SPRINT_LENGTH_DAYS
+} from '#/schemas/project.js'
 import { AUDIT_LOGS_COLLECTION } from '#/services/audit-logs.js'
 import { PAYLOADS_COLLECTION } from '#/services/payloads.js'
 import { PERSONA_MAPPINGS_COLLECTION } from '#/services/persona-mappings.js'
@@ -12,6 +16,10 @@ import {
 import { SURVIVAL_COLLECTION } from '#/services/survival.js'
 
 const DEFAULT_PROJECT_SLUG = 'CRAR'
+const DUPLICATE_KEY_ERROR = 11000
+const NAMESPACE_NOT_FOUND = 26
+const INDEX_NOT_FOUND = 27
+const ONE_DAY_SECONDS = 86400
 
 export const mongoDb = {
   plugin: {
@@ -166,7 +174,7 @@ async function createIndexes(db, logger) {
     .createIndex({ key: 1 }, { unique: true })
   await db
     .collection('jira-unresolved-keys')
-    .createIndex({ checkedAt: 1 }, { expireAfterSeconds: 86400 })
+    .createIndex({ checkedAt: 1 }, { expireAfterSeconds: ONE_DAY_SECONDS })
 
   await migrateDefaultProject(db, logger)
   await removeProjectGroupFields(db, logger)
@@ -191,7 +199,9 @@ export async function createSonarKeyIndex(db, logger) {
       }
     )
   } catch (error) {
-    if (error?.code !== 11000) throw error
+    if (error?.code !== DUPLICATE_KEY_ERROR) {
+      throw error
+    }
     logger?.warn(
       { error: { code: error.code } },
       'Could not create unique index on repository SonarCloud keys; resolve duplicate keys'
@@ -213,8 +223,10 @@ export async function migrateRoleMappingKey(db, logger) {
   try {
     await collection.dropIndex('groupId_1_projectSlug_1')
   } catch (error) {
-    // 27 (IndexNotFound) and 26 (NamespaceNotFound): nothing to drop.
-    if (![26, 27].includes(error?.code)) throw error
+    // IndexNotFound and NamespaceNotFound: nothing to drop.
+    if (![NAMESPACE_NOT_FOUND, INDEX_NOT_FOUND].includes(error?.code)) {
+      throw error
+    }
   }
   if (modifiedCount > 0) {
     logger?.info(
@@ -250,8 +262,8 @@ export async function migrateDefaultProject(db, logger) {
       type: 'ai-native',
       adoptionStartDate: null,
       sprintCalendar: {
-        cadenceDays: 14,
-        anchorDate: new Date('2026-07-08T00:00:00.000Z')
+        cadenceDays: DEFAULT_SPRINT_LENGTH_DAYS,
+        anchorDate: new Date(DEFAULT_SPRINT_ANCHOR)
       },
       jira: {
         projectKeys: ['MMOCR']
@@ -265,17 +277,21 @@ export async function migrateDefaultProject(db, logger) {
       .collection(PAYLOADS_COLLECTION)
       .distinct('repository')
     const now = new Date()
-    for (const fullName of repos) {
-      await db.collection('repositories').updateOne(
-        { fullName },
-        {
-          $set: {
-            fullName,
-            projectSlug: DEFAULT_PROJECT_SLUG,
-            mappedAt: now
+    if (repos.length > 0) {
+      await db.collection('repositories').bulkWrite(
+        repos.map((fullName) => ({
+          updateOne: {
+            filter: { fullName },
+            update: {
+              $set: {
+                fullName,
+                projectSlug: DEFAULT_PROJECT_SLUG,
+                mappedAt: now
+              }
+            },
+            upsert: true
           }
-        },
-        { upsert: true }
+        }))
       )
     }
 

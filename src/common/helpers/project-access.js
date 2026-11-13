@@ -30,7 +30,9 @@ export function isDashboardAdmin(user) {
  * mapping for the project grants access, and groups are never inferred.
  */
 export function resolveProjectRole(user, project) {
-  if (isDashboardAdmin(user)) return PROJECT_ROLES.dashboardAdmin
+  if (isDashboardAdmin(user)) {
+    return PROJECT_ROLES.dashboardAdmin
+  }
   const mapped = user?.projectRoles?.[project?.slug]
   return mapped === PROJECT_ROLES.admin || mapped === PROJECT_ROLES.user
     ? mapped
@@ -43,7 +45,9 @@ export const hasRole = (role, minimum) =>
 /** The user validated by the entra auth strategy, or a 401. */
 export function requireUser(request) {
   const user = request.auth?.credentials
-  if (!user?.oid) throw Boom.unauthorized(null, 'Bearer')
+  if (!user?.oid) {
+    throw Boom.unauthorized(null, 'Bearer')
+  }
   return user
 }
 
@@ -95,7 +99,9 @@ export function assertProjectRole(
  */
 export async function projectForRepository(db, repository) {
   const repo = await findRepository(db, repository)
-  if (!repo?.projectSlug) return null
+  if (!repo?.projectSlug) {
+    return null
+  }
   const project = await findProject(db, repo.projectSlug)
   return project && !project.archivedAt ? project : null
 }
@@ -148,7 +154,9 @@ export async function projectRepositoryNames(request, slug) {
 
 /** Names of repositories the caller may read; null means every repository. */
 export async function readableRepositoryNames(db, user) {
-  if (isDashboardAdmin(user)) return null
+  if (isDashboardAdmin(user)) {
+    return null
+  }
   const [projects, repositories] = await Promise.all([
     listProjects(db),
     listRepositories(db)

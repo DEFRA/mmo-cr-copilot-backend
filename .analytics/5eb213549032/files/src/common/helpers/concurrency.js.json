@@ -1,0 +1,27 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/common/helpers/concurrency.js",
+  "added": 8,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 8,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "3,5,7-8,10-13"
+  },
+  "ai": [
+    [3, "a", "b3103b36", 0],
+    [5, "a", "011b53ba", 0],
+    [7, "a", "c125814b", 0],
+    [8, "a", "679b40a6", 0],
+    [10, "a", "89c3a4ea", 0],
+    [11, "a", "20bfada9", 0],
+    [12, "a", "b50230a1", 0],
+    [13, "a", "cb9379d4", 0]
+  ]
+}

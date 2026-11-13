@@ -1,0 +1,22 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/plugins/entra-auth.test.js",
+  "added": 3,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 2,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 1
+  },
+  "ranges": {
+    "ai-agent": "60-61",
+    "untracked": "59"
+  },
+  "ai": [
+    [60, "a", "cb2bb621", 0],
+    [61, "a", "9845a6a3", 0]
+  ]
+}

@@ -1,0 +1,107 @@
+{
+  "schema": "ai-attribution/2",
+  "id": "5eb213549032",
+  "extensionVersion": "1.0.2",
+  "totals": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 2122,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 503
+  },
+  "fileCount": 54,
+  "signals": {
+    "agentHooks": "installed",
+    "completionKeys": "enabled",
+    "usage": "captured"
+  },
+  "usage": {
+    "source": "copilot-otel-file",
+    "split": "per-request",
+    "sessions": [
+      {
+        "agent": "GitHub Copilot Chat",
+        "splitAcross": 1,
+        "models": [
+          {
+            "model": "claude-opus-5.5",
+            "requests": 53,
+            "inputTokens": 7609329,
+            "outputTokens": 46181,
+            "cacheReadTokens": 7088075,
+            "cacheCreationTokens": 521144,
+            "reasoningTokens": 19630,
+            "credits": 494.7395
+          },
+          {
+            "model": "gpt-5.6-luna",
+            "requests": 10,
+            "inputTokens": 29816,
+            "outputTokens": 3419,
+            "cacheReadTokens": 15842,
+            "cacheCreationTokens": 0,
+            "reasoningTokens": 1432,
+            "credits": 0.7214
+          }
+        ]
+      },
+      {
+        "agent": "GitHub Copilot Chat",
+        "splitAcross": 2,
+        "models": [
+          {
+            "model": "claude-opus-5.5",
+            "requests": 96.5,
+            "inputTokens": 29240420,
+            "outputTokens": 115377,
+            "cacheReadTokens": 28670998,
+            "cacheCreationTokens": 569224,
+            "reasoningTokens": 19983,
+            "credits": 1088.8664
+          },
+          {
+            "model": "gpt-5.6-luna",
+            "requests": 4,
+            "inputTokens": 12301,
+            "outputTokens": 1089,
+            "cacheReadTokens": 5936,
+            "cacheCreationTokens": 0,
+            "reasoningTokens": 346,
+            "credits": 0.2698
+          }
+        ]
+      },
+      {
+        "agent": "GitHub Copilot Chat",
+        "splitAcross": 2,
+        "models": [
+          {
+            "model": "claude-opus-5.5",
+            "requests": 9,
+            "inputTokens": 867980,
+            "outputTokens": 12038,
+            "cacheReadTokens": 703939,
+            "cacheCreationTokens": 164017,
+            "reasoningTokens": 7800,
+            "credits": 120.1726
+          }
+        ]
+      }
+    ],
+    "totals": {
+      "requests": 172.5,
+      "inputTokens": 37759846,
+      "outputTokens": 178104,
+      "cacheReadTokens": 36484790,
+      "cacheCreationTokens": 1254385,
+      "reasoningTokens": 49191,
+      "credits": 1704.7697
+    },
+    "window": {
+      "from": "2026-11-10T09:21:18.127Z",
+      "to": "2026-11-12T16:58:31.611Z"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "schema": "ai-attribution-file/2",
+  "path": "src/schemas/payload.js",
+  "added": 4,
+  "counts": {
+    "aiCompletion": 0,
+    "aiChat": 0,
+    "aiAgent": 4,
+    "aiModified": 0,
+    "pasted": 0,
+    "typed": 0,
+    "untracked": 0
+  },
+  "ranges": {
+    "ai-agent": "31,152-154"
+  },
+  "ai": [
+    [31, "a", "8a8abd3a", 0],
+    [152, "a", "94ce13c5", 0],
+    [153, "a", "21396f3f", 0],
+    [154, "a", "ce68cc55", 0]
+  ]
+}
