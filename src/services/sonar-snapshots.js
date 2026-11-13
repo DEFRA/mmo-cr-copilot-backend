@@ -7,7 +7,7 @@ import {
 } from '#/services/sonar.js'
 
 const NO_RATINGS = { reliability: null, security: null, maintainability: null }
-const NOT_LINKED = (repository) => ({
+const notLinked = (repository) => ({
   configured: true,
   linked: false,
   repository
@@ -81,7 +81,7 @@ async function overview(apiBase, { asOf, db } = {}) {
 async function prMetrics(apiBase, repository, prNumber, { db } = {}) {
   const projectKey = await repositoryProjectKey(db, repository)
   if (!projectKey) {
-    return NOT_LINKED(repository)
+    return notLinked(repository)
   }
   const prNum = Number(prNumber)
   const url = `${apiBase}/summary/new_code?id=${encodeURIComponent(projectKey)}&pullRequest=${encodeURIComponent(String(prNum))}`
@@ -121,7 +121,7 @@ export function createSonarSnapshotReader({
     async getRepoMetrics(repository, { asOf, db } = {}) {
       const projectKey = await repositoryProjectKey(db, repository)
       if (!projectKey) {
-        return NOT_LINKED(repository)
+        return notLinked(repository)
       }
       return repoMetrics({ apiBase, db, repository, projectKey, asOf })
     },

@@ -214,7 +214,7 @@ const sumOf = (list, pick) =>
 function scoreStory(story, unitPrs, context) {
   const prs = [...unitPrs.get(story.key)].map((id) => scorePr(id, context))
   const scored = prs.filter((pr) => pr.complexityELoc !== null)
-  const gated = prs.some((pr) => pr.hasSnapshot) && prs.length > 0
+  const gated = prs.some((pr) => pr.hasSnapshot)
   return {
     cycleDays: Math.max(MIN_CYCLE_DAYS, story.flow.cycleDays ?? MIN_CYCLE_DAYS),
     leadDays: story.flow.leadDays,
